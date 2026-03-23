@@ -16,7 +16,8 @@ export async function getMy(req: Request, res: Response, next: NextFunction) {
 
 export async function markRead(req: Request, res: Response, next: NextFunction) {
   try {
-    await notificationService.markRead(req.params.id, req.user!.id);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    await notificationService.markRead(id, req.user!.id);
     sendSuccess(res, null, "Notification marked as read");
   } catch (err) {
     next(err);

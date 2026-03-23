@@ -14,7 +14,8 @@ export async function list(req: Request, res: Response, next: NextFunction) {
 
 export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
-    const dorm = await dormService.getDormById(req.params.id);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const dorm = await dormService.getDormById(id);
     sendSuccess(res, dorm);
   } catch (err) {
     next(err);
@@ -34,7 +35,8 @@ export async function create(req: Request, res: Response, next: NextFunction) {
 export async function update(req: Request, res: Response, next: NextFunction) {
   try {
     const dto = updateDormSchema.parse(req.body);
-    const dorm = await dormService.updateDorm(req.params.id, dto);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const dorm = await dormService.updateDorm(id, dto);
     sendSuccess(res, dorm);
   } catch (err) {
     next(err);
@@ -43,8 +45,9 @@ export async function update(req: Request, res: Response, next: NextFunction) {
 
 export async function getRooms(req: Request, res: Response, next: NextFunction) {
   try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const { rooms, meta } = await dormService.getDormRooms(
-      req.params.id,
+      id,
       req.query as Record<string, string>
     );
     sendPaginated(res, rooms, meta);

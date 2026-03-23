@@ -14,7 +14,8 @@ export async function list(req: Request, res: Response, next: NextFunction) {
 
 export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
-    const room = await roomService.getRoomById(req.params.id);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const room = await roomService.getRoomById(id);
     sendSuccess(res, room);
   } catch (err) {
     next(err);
@@ -34,7 +35,8 @@ export async function create(req: Request, res: Response, next: NextFunction) {
 export async function update(req: Request, res: Response, next: NextFunction) {
   try {
     const dto = updateRoomSchema.parse(req.body);
-    const room = await roomService.updateRoom(req.params.id, dto);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const room = await roomService.updateRoom(id, dto);
     sendSuccess(res, room);
   } catch (err) {
     next(err);

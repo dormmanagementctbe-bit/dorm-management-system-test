@@ -36,7 +36,8 @@ export async function getMy(req: Request, res: Response, next: NextFunction) {
 
 export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
-    const request = await maintenanceService.getRequestById(req.params.id);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const request = await maintenanceService.getRequestById(id);
     sendSuccess(res, request);
   } catch (err) {
     next(err);
@@ -46,7 +47,8 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
 export async function update(req: Request, res: Response, next: NextFunction) {
   try {
     const dto = updateMaintenanceSchema.parse(req.body);
-    const request = await maintenanceService.updateRequest(req.params.id, req.user!.id, dto);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const request = await maintenanceService.updateRequest(id, req.user!.id, dto);
     sendSuccess(res, request);
   } catch (err) {
     next(err);

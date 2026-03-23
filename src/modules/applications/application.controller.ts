@@ -33,7 +33,8 @@ export async function getMy(req: Request, res: Response, next: NextFunction) {
 
 export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
-    const application = await appService.getApplicationById(req.params.id);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const application = await appService.getApplicationById(id);
     sendSuccess(res, application);
   } catch (err) {
     next(err);
@@ -43,7 +44,8 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
 export async function review(req: Request, res: Response, next: NextFunction) {
   try {
     const dto = reviewApplicationSchema.parse(req.body);
-    const application = await appService.reviewApplication(req.params.id, req.user!.id, dto);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const application = await appService.reviewApplication(id, req.user!.id, dto);
     sendSuccess(res, application);
   } catch (err) {
     next(err);
