@@ -11,6 +11,11 @@ const envSchema = zod_1.z.object({
     DATABASE_URL: zod_1.z.string().min(1, "DATABASE_URL is required"),
     JWT_SECRET: zod_1.z.string().min(32, "JWT_SECRET must be at least 32 characters"),
     JWT_EXPIRES_IN: zod_1.z.string().default("7d"),
+    CORS_ORIGIN: zod_1.z.string().default("*"),
+    CORS_CREDENTIALS: zod_1.z
+        .string()
+        .optional()
+        .transform((value) => value === "true"),
     PORT: zod_1.z.coerce.number().default(3000),
     NODE_ENV: zod_1.z
         .enum(["development", "production", "test"])

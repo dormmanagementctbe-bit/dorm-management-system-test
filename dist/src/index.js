@@ -9,14 +9,28 @@ const helmet_1 = __importDefault(require("helmet"));
 const env_1 = require("./config/env");
 const database_1 = require("./config/database");
 const error_middleware_1 = require("./middleware/error.middleware");
+const request_logger_middleware_1 = require("./middleware/request-logger.middleware");
 const index_1 = require("./routes/index");
 const app = (0, express_1.default)();
 // Security & parsing
 app.use((0, helmet_1.default)());
-app.use((0, cors_1.default)());
+const allowedOrigins = env_1.env.CORS_ORIGIN.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+const corsOptions = {
+    origin: allowedOrigins.length === 1 && allowedOrigins[0] === "*"
+        ? true
+        : allowedOrigins,
+    credentials: env_1.env.CORS_CREDENTIALS,
+};
+app.use((0, cors_1.default)(corsOptions));
+app.use(request_logger_middleware_1.requestLoggerMiddleware);
 app.use(express_1.default.json());
 // Health check
 app.get("/health", (_req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 // API routes
