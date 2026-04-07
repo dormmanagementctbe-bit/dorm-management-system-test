@@ -2,57 +2,77 @@
 // Learn more: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client"
+  provider = "prisma-client-js"
   output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ─────────────────────────────────────────
 // Enums
 // ─────────────────────────────────────────
 
-enum Role {
+enum RoleCode {
   STUDENT
+  DORM_HEAD
   ADMIN
   SUPER_ADMIN
+  MAINTENANCE
+
+  @@map("role_code")
 }
 
-enum AdminLevel {
-  STAFF
-  MANAGER
-  SUPER
-}
-
-enum GenderPolicy {
+enum Gender {
   MALE
   FEMALE
-  MIXED
+
+  @@map("gender")
 }
 
-enum RoomType {
-  SINGLE
-  DOUBLE
-  TRIPLE
-  QUAD
+enum DormGenderRestriction {
+  MALE_ONLY
+  FEMALE_ONLY
+
+  @@map("dorm_gender_restriction")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+
+  @@map("user_status")
 }
 
 enum RoomStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+
+  @@map("room_status")
+}
+
+enum BedStatus {
   AVAILABLE
   OCCUPIED
-  MAINTENANCE
   RESERVED
+  MAINTENANCE
+  INACTIVE
+
+  @@map("bed_status")
 }
 
 enum ApplicationStatus {
-  PENDING
+  SUBMITTED
   APPROVED
   REJECTED
   WAITLISTED
   ALLOCATED
+  CANCELLED
+
+  @@map("application_status")
 }
 
 enum AllocationStatus {
@@ -60,15 +80,17 @@ enum AllocationStatus {
   ACTIVE
   EXPIRED
   CANCELLED
+
+  @@map("allocation_status")
 }
 
 enum MaintenanceCategory {
   PLUMBING
   ELECTRICAL
-  HVAC
   FURNITURE
-  CLEANING
   OTHER
+
+  @@map("maintenance_category")
 }
 
 enum MaintenancePriority {
@@ -76,6 +98,8 @@ enum MaintenancePriority {
   MEDIUM
   HIGH
   URGENT
+
+  @@map("maintenance_priority")
 }
 
 enum MaintenanceStatus {
@@ -84,14 +108,32 @@ enum MaintenanceStatus {
   RESOLVED
   CLOSED
   REJECTED
+
+  @@map("maintenance_status")
 }
 
 enum NotificationType {
-  ALLOCATION
   APPLICATION
+  ALLOCATION
   MAINTENANCE
   SYSTEM
   REMINDER
+
+  @@map("notification_type")
+}
+
+enum SupportDomain {
+  FOOD
+  HOUSING
+
+  @@map("support_domain")
+}
+
+enum SupportMode {
+  CASH
+  IN_KIND
+
+  @@map("support_mode")
 }
 
 // ─────────────────────────────────────────
@@ -99,196 +141,405 @@ enum NotificationType {
 // ─────────────────────────────────────────
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  role         Role     @default(STUDENT)
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                     String     @id @default(uuid()) @db.Uuid
+  email                  String     @unique
+  passwordHash           String     @map("password_hash")
+  status                 UserStatus @default(ACTIVE)
+  isEmailVerified        Boolean    @default(false) @map("is_email_verified")
+  lastLoginAt            DateTime?  @map("last_login_at")
+  failedLoginAttempts    Int        @default(0) @map("failed_login_attempts")
+  passwordResetToken     String?    @map("password_reset_token")
+  passwordResetExpiresAt DateTime?  @map("password_reset_expires_at")
+  createdAt              DateTime   @default(now()) @map("created_at")
+  updatedAt              DateTime   @updatedAt @map("updated_at")
+  deletedAt              DateTime?  @map("deleted_at")
 
-  student             Student?
-  admin               Admin?
-  notifications       Notification[]
-  reportedMaintenance MaintenanceRequest[] @relation("ReportedBy")
+  student                      Student?
+  userRoles                    UserRole[]
+  assignedRoles                UserRole[]                @relation("AssignedBy")
+  notifications                Notification[]
+  reportedMaintenanceRequests  MaintenanceRequest[]      @relation("ReportedBy")
+  assignedMaintenanceRequests  MaintenanceRequest[]      @relation("AssignedTo")
+  allocatedBy                  Allocation[]              @relation("AllocatedBy")
+  reviewedApplications         DormApplication[]         @relation("ReviewedBy")
+  createdCityPriorityRules     CityPriorityRule[]        @relation("CreatedBy")
+  createdDisabilityRules       DisabilityPriorityRule[]  @relation("CreatedBy")
+  auditLogs                    AuditLog[]
 
+  @@index([email])
+  @@index([status])
   @@map("users")
 }
 
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        RoleCode @unique
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  userRoles UserRole[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  roleId           String   @map("role_id") @db.Uuid
+  assignedAt       DateTime @default(now()) @map("assigned_at")
+  assignedByUserId String?  @map("assigned_by_user_id") @db.Uuid
+
+  user         User  @relation(fields: [userId], references: [id])
+  role         Role  @relation(fields: [roleId], references: [id])
+  assignedBy   User? @relation("AssignedBy", fields: [assignedByUserId], references: [id])
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
 model Student {
-  id                  String   @id @default(uuid())
-  userId              String   @unique @map("user_id")
-  studentId           String   @unique @map("student_id")
-  firstName           String   @map("first_name")
-  lastName            String   @map("last_name")
-  academicYear        Int      @map("academic_year")
-  department          String
-  phone               String?
-  distanceKm          Float    @default(0) @map("distance_km")
-  costSharingEligible Boolean  @default(false) @map("cost_sharing_eligible")
-  createdAt           DateTime @default(now()) @map("created_at")
+  id                     String    @id @default(uuid()) @db.Uuid
+  userId                 String    @unique @map("user_id") @db.Uuid
+  studentNumber          String    @unique @map("student_number")
+  firstName              String    @map("first_name")
+  middleName             String?   @map("middle_name")
+  lastName               String    @map("last_name")
+  gender                 Gender
+  studyYear              Int       @map("study_year")
+  department             String?
+  phone                  String?
+  guardianName           String?   @map("guardian_name")
+  guardianPhone          String?   @map("guardian_phone")
+  emergencyContactName   String?   @map("emergency_contact_name")
+  emergencyContactPhone  String?   @map("emergency_contact_phone")
+  hasDisability          Boolean   @default(false) @map("has_disability")
+  disabilityNotes        String?   @map("disability_notes")
+  scholarshipNotes       String?   @map("scholarship_notes")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+  deletedAt              DateTime? @map("deleted_at")
 
-  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  applications DormApplication[]
-  allocations  Allocation[]
+  user                   User                        @relation(fields: [userId], references: [id])
+  supportPreferences     StudentSupportPreference[]
+  applications           DormApplication[]
+  allocations            Allocation[]
 
-  @@index([studentId])
-  @@index([academicYear])
-  @@index([costSharingEligible])
+  @@index([studentNumber])
+  @@index([gender])
+  @@index([studyYear])
+  @@index([hasDisability])
   @@map("students")
 }
 
-model Admin {
-  id         String     @id @default(uuid())
-  userId     String     @unique @map("user_id")
-  firstName  String     @map("first_name")
-  lastName   String     @map("last_name")
-  phone      String?
-  adminLevel AdminLevel @default(STAFF) @map("admin_level")
-  createdAt  DateTime   @default(now()) @map("created_at")
+model StudentSupportPreference {
+  id        String        @id @default(uuid()) @db.Uuid
+  studentId String        @map("student_id") @db.Uuid
+  domain    SupportDomain
+  mode      SupportMode
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
 
-  user                 User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reviewedApplications DormApplication[]    @relation("ReviewedBy")
-  allocations          Allocation[]         @relation("AllocatedBy")
-  assignedMaintenance  MaintenanceRequest[] @relation("AssignedTo")
+  student Student @relation(fields: [studentId], references: [id])
 
-  @@map("admins")
+  @@unique([studentId, domain])
+  @@index([domain, mode])
+  @@map("student_support_preferences")
 }
 
 model AcademicYear {
-  id               String   @id @default(uuid())
-  label            String   @unique
-  startDate        DateTime @map("start_date") @db.Date
-  endDate          DateTime @map("end_date") @db.Date
-  isActive         Boolean  @default(false) @map("is_active")
-  applicationOpen  DateTime @map("application_open") @db.Date
-  applicationClose DateTime @map("application_close") @db.Date
+  id                     String    @id @default(uuid()) @db.Uuid
+  label                  String    @unique
+  startDate              DateTime  @map("start_date") @db.Date
+  endDate                DateTime  @map("end_date") @db.Date
+  applicationOpenDate    DateTime  @map("application_open_date") @db.Date
+  applicationCloseDate   DateTime  @map("application_close_date") @db.Date
+  isActive               Boolean   @default(false) @map("is_active")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
-  applications DormApplication[]
-  allocations  Allocation[]
+  semesters              Semester[]
+  applications           DormApplication[]
+  allocations            Allocation[]
+  cityPriorityRules      CityPriorityRule[]
+  disabilityPriorityRules DisabilityPriorityRule[]
 
+  @@index([isActive])
   @@map("academic_years")
 }
 
+model Semester {
+  id                     String    @id @default(uuid()) @db.Uuid
+  academicYearId         String    @map("academic_year_id") @db.Uuid
+  name                   String
+  startDate              DateTime  @map("start_date") @db.Date
+  endDate                DateTime  @map("end_date") @db.Date
+  applicationOpenDate    DateTime? @map("application_open_date") @db.Date
+  applicationCloseDate   DateTime? @map("application_close_date") @db.Date
+  isActive               Boolean   @default(false) @map("is_active")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  academicYear           AcademicYear             @relation(fields: [academicYearId], references: [id])
+  applications           DormApplication[]
+  allocations            Allocation[]
+  cityPriorityRules      CityPriorityRule[]
+  disabilityPriorityRules DisabilityPriorityRule[]
+
+  @@unique([academicYearId, name])
+  @@index([academicYearId, isActive])
+  @@map("semesters")
+}
+
+model Building {
+  id          String    @id @default(uuid()) @db.Uuid
+  code        String    @unique
+  name        String    @unique
+  location    String?
+  totalFloors Int       @default(1) @map("total_floors")
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  dorms Dorm[]
+
+  @@map("buildings")
+}
+
 model Dorm {
-  id           String       @id @default(uuid())
-  name         String
-  location     String
-  genderPolicy GenderPolicy @default(MIXED) @map("gender_policy")
-  totalRooms   Int          @default(0) @map("total_rooms")
-  isActive     Boolean      @default(true) @map("is_active")
-  createdAt    DateTime     @default(now()) @map("created_at")
+  id                 String                 @id @default(uuid()) @db.Uuid
+  buildingId         String                 @map("building_id") @db.Uuid
+  code               String                 @unique
+  name               String                 @unique
+  genderRestriction  DormGenderRestriction  @map("gender_restriction")
+  isActive           Boolean                @default(true) @map("is_active")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+  deletedAt          DateTime?              @map("deleted_at")
 
-  rooms        Room[]
-  applications DormApplication[] @relation("PreferredDorm")
+  building           Building               @relation(fields: [buildingId], references: [id])
+  rooms              Room[]
+  applicationPreferences ApplicationPreference[]
 
+  @@index([buildingId])
+  @@index([genderRestriction])
   @@index([isActive])
   @@map("dorms")
 }
 
 model Room {
-  id          String     @id @default(uuid())
-  dormId      String     @map("dorm_id")
+  id          String     @id @default(uuid()) @db.Uuid
+  dormId      String     @map("dorm_id") @db.Uuid
+  floorNumber Int        @map("floor_number")
   roomNumber  String     @map("room_number")
   capacity    Int
-  roomType    RoomType   @map("room_type")
-  status      RoomStatus @default(AVAILABLE)
-  monthlyRate Decimal    @map("monthly_rate") @db.Decimal(10, 2)
+  status      RoomStatus @default(ACTIVE)
+  isActive    Boolean    @default(true) @map("is_active")
   createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  deletedAt   DateTime?  @map("deleted_at")
 
-  dorm        Dorm                 @relation(fields: [dormId], references: [id])
-  allocations Allocation[]
-  maintenance MaintenanceRequest[]
+  dorm                Dorm                 @relation(fields: [dormId], references: [id])
+  beds                Bed[]
+  maintenanceRequests MaintenanceRequest[]
 
   @@unique([dormId, roomNumber])
-  @@index([dormId, status])
+  @@index([dormId, floorNumber])
+  @@index([status])
+  @@index([isActive])
   @@map("rooms")
 }
 
+model Bed {
+  id        String    @id @default(uuid()) @db.Uuid
+  roomId    String    @map("room_id") @db.Uuid
+  bedNumber String    @map("bed_number")
+  status    BedStatus @default(AVAILABLE)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  room        Room         @relation(fields: [roomId], references: [id])
+  allocations Allocation[]
+
+  @@unique([roomId, bedNumber])
+  @@index([roomId, status])
+  @@index([isActive])
+  @@map("beds")
+}
+
+model CityPriorityRule {
+  id               String    @id @default(uuid()) @db.Uuid
+  academicYearId   String    @map("academic_year_id") @db.Uuid
+  semesterId       String?   @map("semester_id") @db.Uuid
+  cityName         String    @map("city_name")
+  score            Int
+  createdByUserId  String    @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+  semester     Semester?    @relation(fields: [semesterId], references: [id])
+  createdBy    User         @relation("CreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([academicYearId, semesterId, cityName])
+  @@map("city_priority_rules")
+}
+
+model DisabilityPriorityRule {
+  id               String    @id @default(uuid()) @db.Uuid
+  academicYearId   String    @map("academic_year_id") @db.Uuid
+  semesterId       String?   @map("semester_id") @db.Uuid
+  fixedScore       Int       @map("fixed_score")
+  isActive         Boolean   @default(true) @map("is_active")
+  createdByUserId  String    @map("created_by_user_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id])
+  semester     Semester?    @relation(fields: [semesterId], references: [id])
+  createdBy    User         @relation("CreatedBy", fields: [createdByUserId], references: [id])
+
+  @@unique([academicYearId, semesterId])
+  @@map("disability_priority_rules")
+}
+
 model DormApplication {
-  id              String            @id @default(uuid())
-  studentId       String            @map("student_id")
-  academicYearId  String            @map("academic_year_id")
-  preferredDormId String?           @map("preferred_dorm_id")
-  status          ApplicationStatus @default(PENDING)
-  priorityScore   Float             @default(0) @map("priority_score")
-  reason          String?
-  submittedAt     DateTime          @default(now()) @map("submitted_at")
-  reviewedAt      DateTime?         @map("reviewed_at")
-  reviewedById    String?           @map("reviewed_by_id")
-  reviewNote      String?           @map("review_note")
+  id                     String            @id @default(uuid()) @db.Uuid
+  studentId              String            @map("student_id") @db.Uuid
+  academicYearId         String            @map("academic_year_id") @db.Uuid
+  semesterId             String            @map("semester_id") @db.Uuid
+  currentCity            String?           @map("current_city")
+  basePriorityScore      Int               @default(0) @map("base_priority_score")
+  disabilityBonusScore   Int               @default(0) @map("disability_bonus_score")
+  manualAdjustmentScore  Int               @default(0) @map("manual_adjustment_score")
+  finalPriorityScore     Int               @default(0) @map("final_priority_score")
+  status                 ApplicationStatus @default(SUBMITTED)
+  reason                 String?
+  submittedAt            DateTime          @default(now()) @map("submitted_at")
+  reviewedAt             DateTime?         @map("reviewed_at")
+  reviewedByUserId       String?           @map("reviewed_by_user_id") @db.Uuid
+  reviewNote             String?           @map("review_note")
+  createdAt              DateTime          @default(now()) @map("created_at")
+  updatedAt              DateTime          @updatedAt @map("updated_at")
 
-  student       Student      @relation(fields: [studentId], references: [id])
-  academicYear  AcademicYear @relation(fields: [academicYearId], references: [id])
-  preferredDorm Dorm?        @relation("PreferredDorm", fields: [preferredDormId], references: [id])
-  reviewedBy    Admin?       @relation("ReviewedBy", fields: [reviewedById], references: [id])
-  allocation    Allocation?
+  student            Student                 @relation(fields: [studentId], references: [id])
+  academicYear       AcademicYear            @relation(fields: [academicYearId], references: [id])
+  semester           Semester                @relation(fields: [semesterId], references: [id])
+  reviewedBy         User?                   @relation("ReviewedBy", fields: [reviewedByUserId], references: [id])
+  preferences        ApplicationPreference[]
+  allocation         Allocation?
 
-  @@unique([studentId, academicYearId])
-  @@index([academicYearId, status])
+  @@unique([studentId, academicYearId, semesterId])
+  @@index([academicYearId, semesterId, status])
+  @@index([semesterId, status])
+  @@index([finalPriorityScore])
   @@map("dorm_applications")
 }
 
+model ApplicationPreference {
+  id              String   @id @default(uuid()) @db.Uuid
+  applicationId   String   @map("application_id") @db.Uuid
+  dormId          String   @map("dorm_id") @db.Uuid
+  preferenceRank  Int      @map("preference_rank")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  application DormApplication @relation(fields: [applicationId], references: [id])
+  dorm        Dorm            @relation(fields: [dormId], references: [id])
+
+  @@unique([applicationId, preferenceRank])
+  @@unique([applicationId, dormId])
+  @@map("application_preferences")
+}
+
 model Allocation {
-  id             String           @id @default(uuid())
-  studentId      String           @map("student_id")
-  roomId         String           @map("room_id")
-  applicationId  String           @unique @map("application_id")
-  academicYearId String           @map("academic_year_id")
-  startDate      DateTime         @map("start_date") @db.Date
-  endDate        DateTime         @map("end_date") @db.Date
-  status         AllocationStatus @default(PENDING_CHECKIN)
-  allocatedById  String           @map("allocated_by_id")
-  createdAt      DateTime         @default(now()) @map("created_at")
+  id               String           @id @default(uuid()) @db.Uuid
+  studentId        String           @map("student_id") @db.Uuid
+  applicationId    String           @unique @map("application_id") @db.Uuid
+  academicYearId   String           @map("academic_year_id") @db.Uuid
+  semesterId       String           @map("semester_id") @db.Uuid
+  bedId            String           @map("bed_id") @db.Uuid
+  status           AllocationStatus @default(PENDING_CHECKIN)
+  startDate        DateTime         @map("start_date") @db.Date
+  endDate          DateTime         @map("end_date") @db.Date
+  allocatedByUserId String          @map("allocated_by_user_id") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
   student      Student         @relation(fields: [studentId], references: [id])
-  room         Room            @relation(fields: [roomId], references: [id])
   application  DormApplication @relation(fields: [applicationId], references: [id])
   academicYear AcademicYear    @relation(fields: [academicYearId], references: [id])
-  allocatedBy  Admin           @relation("AllocatedBy", fields: [allocatedById], references: [id])
+  semester     Semester        @relation(fields: [semesterId], references: [id])
+  bed          Bed             @relation(fields: [bedId], references: [id])
+  allocatedBy  User            @relation("AllocatedBy", fields: [allocatedByUserId], references: [id])
 
-  @@index([studentId, status])
-  @@index([roomId, status])
-  @@index([academicYearId])
+  @@index([studentId, academicYearId, semesterId])
+  @@index([bedId, status])
+  @@index([academicYearId, semesterId, status])
   @@map("allocations")
 }
 
 model MaintenanceRequest {
-  id           String              @id @default(uuid())
-  roomId       String              @map("room_id")
-  reportedById String              @map("reported_by_id")
-  category     MaintenanceCategory
-  priority     MaintenancePriority @default(MEDIUM)
-  status       MaintenanceStatus   @default(OPEN)
-  title        String
-  description  String
-  assignedToId String?             @map("assigned_to_id")
-  resolvedAt   DateTime?           @map("resolved_at")
-  createdAt    DateTime            @default(now()) @map("created_at")
-  updatedAt    DateTime            @updatedAt @map("updated_at")
+  id               String              @id @default(uuid()) @db.Uuid
+  roomId           String              @map("room_id") @db.Uuid
+  reportedByUserId String              @map("reported_by_user_id") @db.Uuid
+  assignedToUserId String?             @map("assigned_to_user_id") @db.Uuid
+  category         MaintenanceCategory
+  priority         MaintenancePriority @default(MEDIUM)
+  status           MaintenanceStatus   @default(OPEN)
+  title            String
+  description      String
+  resolvedAt       DateTime?           @map("resolved_at")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
 
-  room       Room   @relation(fields: [roomId], references: [id])
-  reportedBy User   @relation("ReportedBy", fields: [reportedById], references: [id])
-  assignedTo Admin? @relation("AssignedTo", fields: [assignedToId], references: [id])
+  room       Room  @relation(fields: [roomId], references: [id])
+  reportedBy User  @relation("ReportedBy", fields: [reportedByUserId], references: [id])
+  assignedTo User? @relation("AssignedTo", fields: [assignedToUserId], references: [id])
 
   @@index([status, priority])
   @@index([roomId])
-  @@index([reportedById])
+  @@index([reportedByUserId])
+  @@index([assignedToUserId])
   @@map("maintenance_requests")
 }
 
 model Notification {
-  id        String           @id @default(uuid())
-  userId    String           @map("user_id")
-  title     String
-  message   String
-  type      NotificationType
-  isRead    Boolean          @default(false) @map("is_read")
-  createdAt DateTime         @default(now()) @map("created_at")
+  id          String           @id @default(uuid()) @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  title       String
+  message     String
+  type        NotificationType
+  isRead      Boolean          @default(false) @map("is_read")
+  readAt      DateTime?        @map("read_at")
+  emailSentAt DateTime?        @map("email_sent_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
 
   @@index([userId, isRead])
-  @@index([createdAt(sort: Desc)])
+  @@index([type])
+  @@index([createdAt])
   @@map("notifications")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
+  entityName    String   @map("entity_name")
+  entityId      String   @map("entity_id") @db.Uuid
+  action        String
+  oldValues     Json?    @map("old_values")
+  newValues     Json?    @map("new_values")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorUserId], references: [id])
+
+  @@index([entityName, entityId])
+  @@index([actorUserId])
+  @@index([createdAt])
+  @@map("audit_logs")
 }

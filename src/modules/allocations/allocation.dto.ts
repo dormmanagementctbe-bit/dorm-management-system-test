@@ -2,9 +2,10 @@ import { z } from "zod";
 
 export const createAllocationSchema = z.object({
   studentId: z.string().uuid(),
-  roomId: z.string().uuid(),
+  bedId: z.string().uuid(),
   applicationId: z.string().uuid(),
   academicYearId: z.string().uuid(),
+  semesterId: z.string().uuid(),
   startDate: z.string().datetime({ offset: true }).or(z.string().date()),
   endDate: z.string().datetime({ offset: true }).or(z.string().date()),
 });

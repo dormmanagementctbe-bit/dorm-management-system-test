@@ -1,4 +1,4 @@
-import { Prisma } from "../../../generated/prisma";
+import { Prisma, RoomStatus } from "../../../generated/prisma/index";
 import { prisma } from "../../config/database";
 import { parsePagination, buildMeta } from "../../utils/helpers";
 import { CreateRoomDto, UpdateRoomDto } from "./room.dto";
@@ -32,11 +32,13 @@ export async function getRoomById(id: string) {
 }
 
 export async function createRoom(dto: CreateRoomDto) {
-  return prisma.room.create({ data: { ...dto, monthlyRate: new Prisma.Decimal(dto.monthlyRate) } });
+  return prisma.room.create({ data: dto });
 }
 
 export async function updateRoom(id: string, dto: UpdateRoomDto) {
-  const data: Prisma.RoomUpdateInput = { ...dto };
-  if (dto.monthlyRate !== undefined) data.monthlyRate = new Prisma.Decimal(dto.monthlyRate);
+  const data: Prisma.RoomUpdateInput = {
+    ...dto,
+    ...(dto.status ? { status: dto.status as RoomStatus } : {}),
+  };
   return prisma.room.update({ where: { id }, data });
 }

@@ -1,0 +1,34 @@
+                                                                      Table "public.users"
+          Column           |              Type              | Collation | Nullable |        Default        | Storage  | Compression | Stats target | Description 
+---------------------------+--------------------------------+-----------+----------+-----------------------+----------+-------------+--------------+-------------
+ id                        | uuid                           |           | not null |                       | plain    |             |              | 
+ email                     | text                           |           | not null |                       | extended |             |              | 
+ password_hash             | text                           |           | not null |                       | extended |             |              | 
+ status                    | user_status                    |           | not null | 'ACTIVE'::user_status | plain    |             |              | 
+ is_email_verified         | boolean                        |           | not null | false                 | plain    |             |              | 
+ last_login_at             | timestamp(3) without time zone |           |          |                       | plain    |             |              | 
+ failed_login_attempts     | integer                        |           | not null | 0                     | plain    |             |              | 
+ password_reset_token      | text                           |           |          |                       | extended |             |              | 
+ password_reset_expires_at | timestamp(3) without time zone |           |          |                       | plain    |             |              | 
+ created_at                | timestamp(3) without time zone |           | not null | CURRENT_TIMESTAMP     | plain    |             |              | 
+ updated_at                | timestamp(3) without time zone |           | not null |                       | plain    |             |              | 
+ deleted_at                | timestamp(3) without time zone |           |          |                       | plain    |             |              | 
+Indexes:
+    "users_pkey" PRIMARY KEY, btree (id)
+    "users_email_idx" btree (email)
+    "users_email_key" UNIQUE, btree (email)
+    "users_status_idx" btree (status)
+Referenced by:
+    TABLE "allocations" CONSTRAINT "allocations_allocated_by_user_id_fkey" FOREIGN KEY (allocated_by_user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
+    TABLE "audit_logs" CONSTRAINT "audit_logs_actor_user_id_fkey" FOREIGN KEY (actor_user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE SET NULL
+    TABLE "city_priority_rules" CONSTRAINT "city_priority_rules_created_by_user_id_fkey" FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
+    TABLE "disability_priority_rules" CONSTRAINT "disability_priority_rules_created_by_user_id_fkey" FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
+    TABLE "dorm_applications" CONSTRAINT "dorm_applications_reviewed_by_user_id_fkey" FOREIGN KEY (reviewed_by_user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE SET NULL
+    TABLE "maintenance_requests" CONSTRAINT "maintenance_requests_assigned_to_user_id_fkey" FOREIGN KEY (assigned_to_user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE SET NULL
+    TABLE "maintenance_requests" CONSTRAINT "maintenance_requests_reported_by_user_id_fkey" FOREIGN KEY (reported_by_user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
+    TABLE "notifications" CONSTRAINT "notifications_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
+    TABLE "students" CONSTRAINT "students_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
+    TABLE "user_roles" CONSTRAINT "user_roles_assigned_by_user_id_fkey" FOREIGN KEY (assigned_by_user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE SET NULL
+    TABLE "user_roles" CONSTRAINT "user_roles_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE RESTRICT
+Access method: heap
+

@@ -20,8 +20,8 @@ export async function listAllocations(query: {
       skip,
       take,
       include: {
-        student: { select: { firstName: true, lastName: true, studentId: true } },
-        room: { include: { dorm: { select: { name: true } } } },
+        student: { select: { firstName: true, lastName: true, studentNumber: true } },
+        bed: { include: { room: { include: { dorm: { select: { name: true } } } } } },
         academicYear: { select: { label: true } },
       },
       orderBy: { createdAt: "desc" },
@@ -37,9 +37,9 @@ export async function getAllocationById(id: string) {
     where: { id },
     include: {
       student: { include: { user: { select: { email: true } } } },
-      room: { include: { dorm: true } },
+      bed: { include: { room: { include: { dorm: { include: { building: true } } } } } },
       academicYear: true,
-      allocatedBy: { select: { firstName: true, lastName: true } },
+      allocatedBy: { select: { email: true } },
     },
   });
   if (!allocation) throw Object.assign(new Error("Allocation not found"), { statusCode: 404 });
@@ -47,18 +47,16 @@ export async function getAllocationById(id: string) {
 }
 
 export async function createAllocation(adminId: string, dto: CreateAllocationDto) {
-  const admin = await prisma.admin.findUnique({ where: { userId: adminId } });
-  if (!admin) throw Object.assign(new Error("Admin profile not found"), { statusCode: 404 });
-
   return prisma.allocation.create({
     data: {
       studentId: dto.studentId,
-      roomId: dto.roomId,
+      bedId: dto.bedId,
       applicationId: dto.applicationId,
       academicYearId: dto.academicYearId,
+      semesterId: dto.semesterId,
       startDate: new Date(dto.startDate),
       endDate: new Date(dto.endDate),
-      allocatedById: admin.id,
+      allocatedByUserId: adminId,
     },
   });
 }
@@ -69,5 +67,13 @@ export async function updateAllocationStatus(id: string, dto: UpdateAllocationSt
 
 export async function getAllocationPdf(id: string): Promise<Buffer> {
   const allocation = await getAllocationById(id);
-  return generateAllocationPdf(allocation);
+  return generateAllocationPdf({
+    id: allocation.id,
+    student: allocation.student,
+    bed: { bedNumber: allocation.bed.bedNumber },
+    room: { roomNumber: allocation.bed.room.roomNumber, dorm: allocation.bed.room.dorm },
+    academicYear: { label: allocation.academicYear.label },
+    startDate: allocation.startDate,
+    endDate: allocation.endDate,
+  });
 }

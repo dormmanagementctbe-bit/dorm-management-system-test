@@ -4,16 +4,19 @@ interface AllocationData {
   student: {
     firstName: string;
     lastName: string;
-    studentId: string;
+    studentNumber: string;
     user?: { email: string } | null;
+  };
+  bed: {
+    bedNumber: string;
   };
   room: {
     roomNumber: string;
-    roomType: string;
-    monthlyRate: unknown; // Decimal from Prisma
     dorm: {
       name: string;
-      location: string;
+      building?: {
+        location: string | null;
+      } | null;
     };
   };
   academicYear: {
@@ -97,7 +100,7 @@ export async function generateAllocationPdf(allocation: AllocationData): Promise
   y -= 25;
 
   drawField("Student Name:", `${allocation.student.firstName} ${allocation.student.lastName}`);
-  drawField("Student ID:", allocation.student.studentId);
+  drawField("Student Number:", allocation.student.studentNumber);
   if (allocation.student.user?.email) {
     drawField("Email:", allocation.student.user.email);
   }
@@ -114,10 +117,9 @@ export async function generateAllocationPdf(allocation: AllocationData): Promise
 
   drawField("Academic Year:", allocation.academicYear.label);
   drawField("Dormitory:", allocation.room.dorm.name);
-  drawField("Location:", allocation.room.dorm.location);
+  drawField("Location:", allocation.room.dorm.building?.location ?? "N/A");
   drawField("Room Number:", allocation.room.roomNumber);
-  drawField("Room Type:", allocation.room.roomType);
-  drawField("Monthly Rate:", `ETB ${Number(allocation.room.monthlyRate).toLocaleString()}`);
+  drawField("Bed Number:", allocation.bed.bedNumber);
   drawField("Check-in Date:", allocation.startDate.toLocaleDateString("en-US", { dateStyle: "long" }));
   drawField("Check-out Date:", allocation.endDate.toLocaleDateString("en-US", { dateStyle: "long" }));
 

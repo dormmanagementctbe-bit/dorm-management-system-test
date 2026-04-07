@@ -1,4 +1,4 @@
-import { Role } from "../../generated/prisma";
+import { RoleCode } from "../../generated/prisma/index";
 
 // Extend Express Request to carry authenticated user info
 declare global {
@@ -10,8 +10,10 @@ declare global {
 }
 
 export interface AuthPayload {
+  sub: string;
   id: string;
-  role: Role;
+  roles: RoleCode[];
+  email?: string;
 }
 
 // Standard API response wrapper

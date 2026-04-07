@@ -7,6 +7,7 @@ import { applicationRouter } from "../modules/applications/application.routes";
 import { allocationRouter } from "../modules/allocations/allocation.routes";
 import { maintenanceRouter } from "../modules/maintenance/maintenance.routes";
 import { notificationRouter } from "../modules/notifications/notification.routes";
+import { usersRouter } from "../modules/users/users.routes";
 
 export const router = Router();
 
@@ -18,3 +19,4 @@ router.use("/applications", applicationRouter);
 router.use("/allocations", allocationRouter);
 router.use("/maintenance", maintenanceRouter);
 router.use("/notifications", notificationRouter);
+router.use("/users", usersRouter);

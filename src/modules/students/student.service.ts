@@ -10,13 +10,13 @@ export async function listStudents(query: { page?: string; limit?: string; searc
         OR: [
           { firstName: { contains: query.search, mode: "insensitive" as const } },
           { lastName: { contains: query.search, mode: "insensitive" as const } },
-          { studentId: { contains: query.search, mode: "insensitive" as const } },
+          { studentNumber: { contains: query.search, mode: "insensitive" as const } },
         ],
       }
     : {};
 
   const [students, total] = await prisma.$transaction([
-    prisma.student.findMany({ where, skip, take, include: { user: { select: { email: true, isActive: true } } }, orderBy: { createdAt: "desc" } }),
+    prisma.student.findMany({ where, skip, take, include: { user: { select: { email: true, status: true } } }, orderBy: { createdAt: "desc" } }),
     prisma.student.count({ where }),
   ]);
 
@@ -26,7 +26,15 @@ export async function listStudents(query: { page?: string; limit?: string; searc
 export async function getStudentById(id: string) {
   const student = await prisma.student.findUnique({
     where: { id },
-    include: { user: { select: { email: true, role: true, isActive: true } } },
+    include: {
+      user: {
+        select: {
+          email: true,
+          status: true,
+          userRoles: { include: { role: { select: { code: true, name: true } } } },
+        },
+      },
+    },
   });
   if (!student) throw Object.assign(new Error("Student not found"), { statusCode: 404 });
   return student;
@@ -46,7 +54,7 @@ export async function getStudentAllocation(studentId: string) {
   return prisma.allocation.findFirst({
     where: { studentId, status: { in: ["ACTIVE", "PENDING_CHECKIN"] } },
     include: {
-      room: { include: { dorm: true } },
+      bed: { include: { room: { include: { dorm: true } } } },
       academicYear: true,
     },
     orderBy: { createdAt: "desc" },

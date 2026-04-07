@@ -4,7 +4,7 @@ import { CreateMaintenanceDto, UpdateMaintenanceDto } from "./maintenance.dto";
 
 export async function createRequest(userId: string, dto: CreateMaintenanceDto) {
   return prisma.maintenanceRequest.create({
-    data: { ...dto, reportedById: userId },
+    data: { ...dto, reportedByUserId: userId },
   });
 }
 
@@ -29,7 +29,7 @@ export async function listRequests(query: {
       include: {
         room: { include: { dorm: { select: { name: true } } } },
         reportedBy: { select: { email: true } },
-        assignedTo: { select: { firstName: true, lastName: true } },
+        assignedTo: { select: { email: true } },
       },
       orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
     }),
@@ -44,13 +44,13 @@ export async function getMyRequests(userId: string, query: { page?: string; limi
 
   const [requests, total] = await prisma.$transaction([
     prisma.maintenanceRequest.findMany({
-      where: { reportedById: userId },
+      where: { reportedByUserId: userId },
       skip,
       take,
       include: { room: { include: { dorm: { select: { name: true } } } } },
       orderBy: { createdAt: "desc" },
     }),
-    prisma.maintenanceRequest.count({ where: { reportedById: userId } }),
+    prisma.maintenanceRequest.count({ where: { reportedByUserId: userId } }),
   ]);
 
   return { requests, meta: buildMeta(total, page, limit) };
@@ -77,10 +77,8 @@ export async function updateRequest(id: string, adminId: string, dto: UpdateMain
     if (dto.status === "RESOLVED") data.resolvedAt = new Date();
   }
   if (dto.priority !== undefined) data.priority = dto.priority;
-  if (dto.assignedToId !== undefined) {
-    const admin = await prisma.admin.findUnique({ where: { userId: adminId } });
-    if (!admin) throw Object.assign(new Error("Admin not found"), { statusCode: 404 });
-    data.assignedToId = admin.id;
+  if (dto.assignedToUserId !== undefined) {
+    data.assignedToUserId = dto.assignedToUserId;
   }
 
   return prisma.maintenanceRequest.update({ where: { id }, data });

@@ -1,47 +1,8 @@
-import express from "express";
-import cors, { CorsOptions } from "cors";
-import helmet from "helmet";
-import { env } from "./config/env";
 import { prisma } from "./config/database";
-import { errorMiddleware } from "./middleware/error.middleware";
-import { requestLoggerMiddleware } from "./middleware/request-logger.middleware";
-import { router } from "./routes/index";
+import { env } from "./config/env";
+import { createApp } from "./app";
 
-const app = express();
-
-// Security & parsing
-app.use(helmet());
-
-const allowedOrigins = env.CORS_ORIGIN.split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
-const corsOptions: CorsOptions = {
-  origin:
-    allowedOrigins.length === 1 && allowedOrigins[0] === "*"
-      ? true
-      : allowedOrigins,
-  credentials: env.CORS_CREDENTIALS,
-};
-
-app.use(cors(corsOptions));
-app.use(requestLoggerMiddleware);
-app.use(express.json());
-
-// Health check
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
-
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
-
-// API routes
-app.use("/api", router);
-
-// Global error handler (must be last)
-app.use(errorMiddleware);
+const app = createApp();
 
 async function bootstrap() {
   await prisma.$connect();

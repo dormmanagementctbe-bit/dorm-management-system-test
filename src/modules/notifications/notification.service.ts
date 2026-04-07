@@ -1,4 +1,4 @@
-import { NotificationType } from "../../../generated/prisma";
+import { NotificationType } from "../../../generated/prisma/index";
 import { prisma } from "../../config/database";
 import { parsePagination, buildMeta } from "../../utils/helpers";
 

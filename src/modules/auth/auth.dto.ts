@@ -3,24 +3,27 @@ import { z } from "zod";
 export const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8, "Password must be at least 8 characters"),
-  role: z.enum(["STUDENT", "ADMIN"]).default("STUDENT"),
-  // Student-specific fields
-  studentId: z.string().optional(),
-  firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
-  academicYear: z.coerce.number().int().min(1).max(5).optional(),
+  studentNumber: z.string().min(1, "studentNumber is required"),
+  firstName: z.string().min(1, "firstName is required"),
+  middleName: z.string().optional(),
+  lastName: z.string().min(1, "lastName is required"),
+  gender: z.enum(["MALE", "FEMALE"]),
+  studyYear: z.coerce.number().int().min(1).max(8),
   department: z.string().optional(),
   phone: z.string().optional(),
-  distanceKm: z.coerce.number().min(0).optional(),
-  costSharingEligible: z.boolean().optional(),
-  // Admin-specific fields
-  adminLevel: z.enum(["STAFF", "MANAGER", "SUPER"]).optional(),
-});
+  guardianName: z.string().optional(),
+  guardianPhone: z.string().optional(),
+  emergencyContactName: z.string().optional(),
+  emergencyContactPhone: z.string().optional(),
+  hasDisability: z.boolean().optional(),
+  disabilityNotes: z.string().optional(),
+  scholarshipNotes: z.string().optional(),
+}).strict();
 
 export const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
-});
+}).strict();
 
 export type RegisterDto = z.infer<typeof registerSchema>;
 export type LoginDto = z.infer<typeof loginSchema>;

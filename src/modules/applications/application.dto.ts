@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 export const createApplicationSchema = z.object({
-  preferredDormId: z.string().uuid().optional(),
+  semesterId: z.string().uuid(),
+  currentCity: z.string().max(120).optional(),
+  preferredDormIds: z.array(z.string().uuid()).min(1).max(3).optional(),
   reason: z.string().max(1000).optional(),
 });
 
