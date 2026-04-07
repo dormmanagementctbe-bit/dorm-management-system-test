@@ -28,6 +28,11 @@ export async function authenticate(
     return;
   }
 
+  if (payload.tokenType && payload.tokenType !== "access") {
+    sendError(res, "Invalid token type", 401);
+    return;
+  }
+
   const userId = payload.sub || payload.id;
   if (!userId) {
     sendError(res, "Invalid authentication payload", 401);

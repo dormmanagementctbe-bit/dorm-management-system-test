@@ -4,6 +4,7 @@ import { prisma } from "../../config/database";
 import { env } from "../../config/env";
 import { buildMeta, parsePagination } from "../../utils/helpers";
 import { sanitizeUser } from "../../utils/sanitize-user";
+import { assertStrongPasswordOrThrow } from "../../utils/password-policy";
 import {
   CreateUserDto,
   ListUsersQueryDto,
@@ -29,6 +30,14 @@ function canManageTarget(actorRoles: RoleCode[], targetRoles: RoleCode[]): boole
   }
 
   return false;
+}
+
+function includesPrivilegedAccountRole(roleCodes: RoleCode[]): boolean {
+  return (
+    roleCodes.includes(RoleCode.ADMIN) ||
+    roleCodes.includes(RoleCode.DORM_HEAD) ||
+    roleCodes.includes(RoleCode.MAINTENANCE)
+  );
 }
 
 const userSelect = {
@@ -123,6 +132,8 @@ export async function updateCurrentUser(userId: string, dto: UpdateMeDto) {
   }
 
   if (dto.newPassword) {
+    await assertStrongPasswordOrThrow(dto.newPassword);
+
     const isCurrentPasswordValid = await bcrypt.compare(
       dto.currentPassword ?? "",
       user.passwordHash
@@ -155,9 +166,80 @@ export async function updateCurrentUser(userId: string, dto: UpdateMeDto) {
         },
       });
     }
+
+    await tx.auditLog.create({
+      data: {
+        actorUserId: user.id,
+        entityName: "User",
+        entityId: user.id,
+        action: "USER_SELF_UPDATE",
+        newValues: {
+          updatedProfile: true,
+          changedPassword: Boolean(dto.newPassword),
+        },
+      },
+    });
   });
 
   return getCurrentUser(userId);
+}
+
+export async function deactivateCurrentStudentAccount(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      status: true,
+      deletedAt: true,
+      userRoles: {
+        select: {
+          role: {
+            select: { code: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!user || user.deletedAt !== null) {
+    throw httpError("User not found", 404);
+  }
+
+  if (user.status !== UserStatus.ACTIVE) {
+    throw httpError("Account is already inactive", 400);
+  }
+
+  const roleCodes = targetRoleCodes(user);
+  if (!roleCodes.includes(RoleCode.STUDENT)) {
+    throw httpError("Only student accounts can self-deactivate", 403);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      status: UserStatus.INACTIVE,
+      deletedAt: new Date(),
+    },
+    select: userSelect,
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: user.id,
+      entityName: "User",
+      entityId: user.id,
+      action: "USER_SELF_DEACTIVATE",
+      oldValues: {
+        status: user.status,
+        deletedAt: user.deletedAt,
+      },
+      newValues: {
+        status: UserStatus.INACTIVE,
+      },
+    },
+  });
+
+  return sanitizeUser(updated);
 }
 
 export async function listUsers(query: ListUsersQueryDto) {
@@ -242,9 +324,18 @@ export async function createUser(
     throw httpError("Only SUPER_ADMIN can assign SUPER_ADMIN role", 403);
   }
 
+  if (
+    includesPrivilegedAccountRole(dto.roleCodes) &&
+    !hasRole(actorRoles, RoleCode.SUPER_ADMIN)
+  ) {
+    throw httpError("Only SUPER_ADMIN can create ADMIN, DORM_HEAD, or MAINTENANCE accounts", 403);
+  }
+
   if (dto.roleCodes.includes(RoleCode.STUDENT) && !dto.studentProfile) {
     throw httpError("studentProfile is required when assigning STUDENT role", 400);
   }
+
+  await assertStrongPasswordOrThrow(dto.password);
 
   const passwordHash = await bcrypt.hash(dto.password, env.BCRYPT_ROUNDS);
 
@@ -254,6 +345,14 @@ export async function createUser(
         email: dto.email,
         passwordHash,
         status: UserStatus.ACTIVE,
+        ...(includesPrivilegedAccountRole(dto.roleCodes)
+          ? {
+              passwordResetToken: "TEMP_PASSWORD_REQUIRED",
+              passwordResetExpiresAt: new Date(
+                Date.now() + env.TEMP_PASSWORD_EXPIRY_DAYS * 24 * 60 * 60 * 1000
+              ),
+            }
+          : {}),
       },
     });
 
@@ -290,6 +389,19 @@ export async function createUser(
     if (!fullUser) {
       throw httpError("User creation failed", 500);
     }
+
+    await tx.auditLog.create({
+      data: {
+        actorUserId: actorId,
+        entityName: "User",
+        entityId: createdUser.id,
+        action: "USER_CREATE",
+        newValues: {
+          email: createdUser.email,
+          roleCodes: dto.roleCodes,
+        },
+      },
+    });
 
     return fullUser;
   });
@@ -348,10 +460,6 @@ export async function updateUserById(
       await tx.user.update({ where: { id: target.id }, data: { email: dto.email } });
     }
 
-    if (dto.status !== undefined) {
-      throw httpError("Use DELETE to deactivate and /reactivate to reactivate users", 400);
-    }
-
     if (dto.roleCodes) {
       if (
         dto.roleCodes.includes(RoleCode.SUPER_ADMIN) &&
@@ -360,7 +468,26 @@ export async function updateUserById(
         throw httpError("Only SUPER_ADMIN can assign SUPER_ADMIN role", 403);
       }
 
+      if (
+        includesPrivilegedAccountRole(dto.roleCodes) &&
+        !hasRole(actorRoles, RoleCode.SUPER_ADMIN)
+      ) {
+        throw httpError("Only SUPER_ADMIN can assign ADMIN, DORM_HEAD, or MAINTENANCE roles", 403);
+      }
+
       await setUserRoles(tx, target.id, dto.roleCodes, actorId);
+
+      if (includesPrivilegedAccountRole(dto.roleCodes)) {
+        await tx.user.update({
+          where: { id: target.id },
+          data: {
+            passwordResetToken: "TEMP_PASSWORD_REQUIRED",
+            passwordResetExpiresAt: new Date(
+              Date.now() + env.TEMP_PASSWORD_EXPIRY_DAYS * 24 * 60 * 60 * 1000
+            ),
+          },
+        });
+      }
     }
 
     if (dto.studentProfile && target.student) {
@@ -385,6 +512,20 @@ export async function updateUserById(
         },
       });
     }
+
+    await tx.auditLog.create({
+      data: {
+        actorUserId: actorId,
+        entityName: "User",
+        entityId: target.id,
+        action: "USER_UPDATE",
+        newValues: {
+          email: dto.email,
+          roleCodes: dto.roleCodes,
+          studentProfileUpdated: Boolean(dto.studentProfile),
+        },
+      },
+    });
   });
 
   return getUserById(userId, true);
@@ -430,10 +571,26 @@ export async function deactivateUser(
     select: userSelect,
   });
 
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: actorId,
+      entityName: "User",
+      entityId: target.id,
+      action: "USER_DEACTIVATE",
+      oldValues: {
+        status: target.status,
+        deletedAt: target.deletedAt,
+      },
+      newValues: {
+        status: UserStatus.INACTIVE,
+      },
+    },
+  });
+
   return sanitizeUser(updated);
 }
 
-export async function reactivateUser(actorRoles: RoleCode[], userId: string) {
+export async function reactivateUser(actorId: string, actorRoles: RoleCode[], userId: string) {
   const target = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -467,6 +624,23 @@ export async function reactivateUser(actorRoles: RoleCode[], userId: string) {
       deletedAt: null,
     },
     select: userSelect,
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: actorId,
+      entityName: "User",
+      entityId: target.id,
+      action: "USER_REACTIVATE",
+      oldValues: {
+        status: target.status,
+        deletedAt: target.deletedAt,
+      },
+      newValues: {
+        status: UserStatus.ACTIVE,
+        deletedAt: null,
+      },
+    },
   });
 
   return sanitizeUser(updated);

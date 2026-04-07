@@ -12,6 +12,8 @@ type UserRecord = {
   isEmailVerified: boolean;
   lastLoginAt: Date | null;
   failedLoginAttempts: number;
+  passwordResetToken: string | null;
+  passwordResetExpiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -56,11 +58,38 @@ type StudentRecord = {
   deletedAt: Date | null;
 };
 
+type AuditLogRecord = {
+  id: string;
+  actorUserId: string | null;
+  entityName: string;
+  entityId: string;
+  action: string;
+  oldValues?: unknown;
+  newValues?: unknown;
+  createdAt: Date;
+};
+
+type RefreshSessionRecord = {
+  id: string;
+  userId: string;
+  tokenJti: string;
+  tokenHash: string;
+  expiresAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+  revokedReason: string | null;
+  replacedBySessionId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export const db = {
   users: [] as UserRecord[],
   roles: [] as RoleRecord[],
   userRoles: [] as UserRoleRecord[],
   students: [] as StudentRecord[],
+  auditLogs: [] as AuditLogRecord[],
+  refreshSessions: [] as RefreshSessionRecord[],
 };
 
 let idCounter = 1;
@@ -263,6 +292,8 @@ export const mockPrisma = {
         isEmailVerified: false,
         lastLoginAt: null,
         failedLoginAttempts: 0,
+        passwordResetToken: (data.passwordResetToken as string | null) ?? null,
+        passwordResetExpiresAt: (data.passwordResetExpiresAt as Date | null) ?? null,
         createdAt: new Date(),
         updatedAt: new Date(),
         deletedAt: null,
@@ -278,6 +309,12 @@ export const mockPrisma = {
       if (data.email !== undefined) user.email = String(data.email);
       if (data.passwordHash !== undefined) user.passwordHash = String(data.passwordHash);
       if (data.status !== undefined) user.status = data.status as UserStatus;
+      if (Object.prototype.hasOwnProperty.call(data, "passwordResetToken")) {
+        user.passwordResetToken = (data.passwordResetToken ?? null) as string | null;
+      }
+      if (Object.prototype.hasOwnProperty.call(data, "passwordResetExpiresAt")) {
+        user.passwordResetExpiresAt = (data.passwordResetExpiresAt ?? null) as Date | null;
+      }
       if (Object.prototype.hasOwnProperty.call(data, "deletedAt")) {
         user.deletedAt = (data.deletedAt ?? null) as Date | null;
       }
@@ -392,6 +429,112 @@ export const mockPrisma = {
     }),
   },
 
+  auditLog: {
+    create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+      const log: AuditLogRecord = {
+        id: nextId(),
+        actorUserId: (data.actorUserId as string | null) ?? null,
+        entityName: String(data.entityName),
+        entityId: String(data.entityId),
+        action: String(data.action),
+        oldValues: data.oldValues,
+        newValues: data.newValues,
+        createdAt: new Date(),
+      };
+      db.auditLogs.push(log);
+      return log;
+    }),
+  },
+
+  refreshSession: {
+    findUnique: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      if (where.id && typeof where.id === "string") {
+        return db.refreshSessions.find((s) => s.id === where.id) ?? null;
+      }
+
+      if (where.tokenJti && typeof where.tokenJti === "string") {
+        return db.refreshSessions.find((s) => s.tokenJti === where.tokenJti) ?? null;
+      }
+
+      return null;
+    }),
+
+    create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+      const created: RefreshSessionRecord = {
+        id: nextId(),
+        userId: String(data.userId),
+        tokenJti: String(data.tokenJti),
+        tokenHash: String(data.tokenHash),
+        expiresAt: data.expiresAt as Date,
+        lastUsedAt: (data.lastUsedAt as Date | null) ?? null,
+        revokedAt: (data.revokedAt as Date | null) ?? null,
+        revokedReason: (data.revokedReason as string | null) ?? null,
+        replacedBySessionId: (data.replacedBySessionId as string | null) ?? null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      db.refreshSessions.push(created);
+      return created;
+    }),
+
+    update: vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const session = db.refreshSessions.find((s) => s.id === where.id);
+      if (!session) throw new Error("Refresh session not found");
+
+      if (Object.prototype.hasOwnProperty.call(data, "lastUsedAt")) {
+        session.lastUsedAt = (data.lastUsedAt as Date | null) ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(data, "revokedAt")) {
+        session.revokedAt = (data.revokedAt as Date | null) ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(data, "revokedReason")) {
+        session.revokedReason = (data.revokedReason as string | null) ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(data, "replacedBySessionId")) {
+        session.replacedBySessionId = (data.replacedBySessionId as string | null) ?? null;
+      }
+
+      session.updatedAt = new Date();
+      return session;
+    }),
+
+    updateMany: vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const matched = db.refreshSessions.filter((session) => {
+        if (where.id && session.id !== where.id) return false;
+        if (where.userId && session.userId !== where.userId) return false;
+
+        if (Object.prototype.hasOwnProperty.call(where, "revokedAt")) {
+          if (where.revokedAt === null && session.revokedAt !== null) return false;
+        }
+
+        if (where.expiresAt && typeof where.expiresAt === "object") {
+          const ops = where.expiresAt as { gt?: Date };
+          if (ops.gt && !(session.expiresAt > ops.gt)) return false;
+        }
+
+        return true;
+      });
+
+      for (const session of matched) {
+        if (Object.prototype.hasOwnProperty.call(data, "lastUsedAt")) {
+          session.lastUsedAt = (data.lastUsedAt as Date | null) ?? null;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, "revokedAt")) {
+          session.revokedAt = (data.revokedAt as Date | null) ?? null;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, "revokedReason")) {
+          session.revokedReason = (data.revokedReason as string | null) ?? null;
+        }
+        if (Object.prototype.hasOwnProperty.call(data, "replacedBySessionId")) {
+          session.replacedBySessionId = (data.replacedBySessionId as string | null) ?? null;
+        }
+        session.updatedAt = new Date();
+      }
+
+      return { count: matched.length };
+    }),
+  },
+
   $transaction: vi.fn(async (arg: unknown) => {
     if (Array.isArray(arg)) {
       return Promise.all(arg);
@@ -410,6 +553,8 @@ export function resetMockDb() {
   db.roles.length = 0;
   db.userRoles.length = 0;
   db.students.length = 0;
+  db.auditLogs.length = 0;
+  db.refreshSessions.length = 0;
   idCounter = 1;
   vi.clearAllMocks();
 }
@@ -433,6 +578,8 @@ export function seedUser(params: {
     isEmailVerified: false,
     lastLoginAt: null,
     failedLoginAttempts: 0,
+    passwordResetToken: null,
+    passwordResetExpiresAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     deletedAt: params.deletedAt ?? null,

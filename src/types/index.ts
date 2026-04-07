@@ -14,6 +14,7 @@ export interface AuthPayload {
   id: string;
   roles: RoleCode[];
   email?: string;
+  tokenType?: "access" | "refresh";
 }
 
 // Standard API response wrapper

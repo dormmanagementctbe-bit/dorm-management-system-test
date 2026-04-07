@@ -8,8 +8,6 @@ const roleCodeSchema = z.enum([
   "MAINTENANCE",
 ]);
 
-const userStatusSchema = z.enum(["ACTIVE", "INACTIVE", "SUSPENDED"]);
-
 const studentProfileSchema = z.object({
   studentNumber: z.string().min(1),
   firstName: z.string().min(1),
@@ -76,7 +74,6 @@ export const createUserSchema = z
 export const updateUserByIdSchema = z
   .object({
     email: z.string().email().optional(),
-    status: userStatusSchema.optional(),
     roleCodes: z.array(roleCodeSchema).min(1).optional(),
     studentProfile: studentProfileSchema.partial().optional(),
     passwordHash: z.never().optional(),

@@ -27,6 +27,15 @@ export async function updateMe(req: Request, res: Response, next: NextFunction) 
   }
 }
 
+export async function deactivateMe(req: Request, res: Response, next: NextFunction) {
+  try {
+    const user = await usersService.deactivateCurrentStudentAccount(req.user!.id);
+    sendSuccess(res, user, "Account deactivated successfully");
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const query = listUsersQuerySchema.parse(req.query);
@@ -82,7 +91,7 @@ export async function deactivate(req: Request, res: Response, next: NextFunction
 export async function reactivate(req: Request, res: Response, next: NextFunction) {
   try {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const user = await usersService.reactivateUser(req.user!.roles, id);
+    const user = await usersService.reactivateUser(req.user!.id, req.user!.roles, id);
     sendSuccess(res, user, "User reactivated successfully");
   } catch (err) {
     next(err);

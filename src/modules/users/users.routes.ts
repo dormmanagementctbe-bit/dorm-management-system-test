@@ -9,6 +9,7 @@ usersRouter.use(authenticate);
 
 usersRouter.get("/me", usersController.getMe);
 usersRouter.patch("/me", usersController.updateMe);
+usersRouter.delete("/me", usersController.deactivateMe);
 
 usersRouter.get("/", requireRole("ADMIN", "SUPER_ADMIN"), usersController.list);
 usersRouter.get("/:id", requireRole("ADMIN", "SUPER_ADMIN"), usersController.getById);
