@@ -11,10 +11,10 @@ const roleCodeSchema = z.enum([
 const studentProfileSchema = z.object({
   studentNumber: z.string().min(1),
   firstName: z.string().min(1),
-  middleName: z.string().optional(),
-  lastName: z.string().min(1),
+  fatherName: z.string().optional(),
+  grandfatherName: z.string().min(1),
   gender: z.enum(["MALE", "FEMALE"]),
-  studyYear: z.coerce.number().int().min(1).max(8),
+  studyYear: z.enum(["I", "II", "III", "IV", "V"]),
   department: z.string().optional(),
   phone: z.string().optional(),
   guardianName: z.string().optional(),
@@ -41,8 +41,8 @@ export const listUsersQuerySchema = z
 export const updateMeSchema = z
   .object({
     firstName: z.string().min(1).optional(),
-    middleName: z.string().optional(),
-    lastName: z.string().min(1).optional(),
+    fatherName: z.string().optional(),
+    grandfatherName: z.string().min(1).optional(),
     phone: z.string().nullable().optional(),
     department: z.string().optional(),
     currentPassword: z.string().min(8).optional(),

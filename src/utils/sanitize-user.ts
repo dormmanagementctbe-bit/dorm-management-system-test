@@ -4,15 +4,14 @@ export interface SafeStudentProfile {
   id: string;
   studentNumber: string;
   firstName: string;
-  middleName: string | null;
-  lastName: string;
+  fatherName: string | null;
+  grandfatherName: string;
   gender: Gender;
-  studyYear: number;
+  studyYear: "I" | "II" | "III" | "IV" | "V";
   department: string | null;
   phone: string | null;
   hasDisability: boolean;
   disabilityNotes: string | null;
-  scholarshipNotes: string | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;

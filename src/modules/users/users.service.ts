@@ -159,8 +159,8 @@ export async function updateCurrentUser(userId: string, dto: UpdateMeDto) {
         where: { userId: user.id },
         data: {
           firstName: dto.firstName,
-          middleName: dto.middleName,
-          lastName: dto.lastName,
+          fatherName: dto.fatherName,
+          grandfatherName: dto.grandfatherName,
           phone: dto.phone,
           department: dto.department,
         },
@@ -258,7 +258,7 @@ export async function listUsers(query: ListUsersQueryDto) {
           OR: [
             { email: { contains: query.search, mode: "insensitive" } },
             { student: { is: { firstName: { contains: query.search, mode: "insensitive" } } } },
-            { student: { is: { lastName: { contains: query.search, mode: "insensitive" } } } },
+            { student: { is: { grandfatherName: { contains: query.search, mode: "insensitive" } } } },
             { student: { is: { studentNumber: { contains: query.search, mode: "insensitive" } } } },
           ],
         }
@@ -345,6 +345,7 @@ export async function createUser(
         email: dto.email,
         passwordHash,
         status: UserStatus.ACTIVE,
+        mustChangePassword: dto.roleCodes.includes(RoleCode.STUDENT),
         ...(includesPrivilegedAccountRole(dto.roleCodes)
           ? {
               passwordResetToken: "TEMP_PASSWORD_REQUIRED",
@@ -364,8 +365,8 @@ export async function createUser(
           userId: createdUser.id,
           studentNumber: dto.studentProfile.studentNumber,
           firstName: dto.studentProfile.firstName,
-          middleName: dto.studentProfile.middleName,
-          lastName: dto.studentProfile.lastName,
+          fatherName: dto.studentProfile.fatherName,
+          grandfatherName: dto.studentProfile.grandfatherName,
           gender: dto.studentProfile.gender,
           studyYear: dto.studentProfile.studyYear,
           department: dto.studentProfile.department,
@@ -496,8 +497,8 @@ export async function updateUserById(
         data: {
           studentNumber: dto.studentProfile.studentNumber,
           firstName: dto.studentProfile.firstName,
-          middleName: dto.studentProfile.middleName,
-          lastName: dto.studentProfile.lastName,
+          fatherName: dto.studentProfile.fatherName,
+          grandfatherName: dto.studentProfile.grandfatherName,
           gender: dto.studentProfile.gender,
           studyYear: dto.studentProfile.studyYear,
           department: dto.studentProfile.department,

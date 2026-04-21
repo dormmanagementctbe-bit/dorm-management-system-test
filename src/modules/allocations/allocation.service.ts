@@ -20,7 +20,7 @@ export async function listAllocations(query: {
       skip,
       take,
       include: {
-        student: { select: { firstName: true, lastName: true, studentNumber: true } },
+        student: { select: { firstName: true, grandfatherName: true, studentNumber: true } },
         bed: { include: { room: { include: { dorm: { select: { name: true } } } } } },
         academicYear: { select: { label: true } },
       },

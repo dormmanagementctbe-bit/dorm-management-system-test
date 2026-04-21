@@ -4,13 +4,20 @@ import jwt from "jsonwebtoken";
 import { Prisma, RoleCode, UserStatus } from "../../../generated/prisma/index";
 import { prisma } from "../../config/database";
 import { env } from "../../config/env";
-import { RegisterDto, LoginDto, ChangeTemporaryPasswordDto } from "./auth.dto";
+import {
+  RegisterDto,
+  LoginDto,
+  ChangeTemporaryPasswordDto,
+  VerifyFirstLoginOtpDto,
+} from "./auth.dto";
 import { sanitizeUser } from "../../utils/sanitize-user";
 import { assertStrongPasswordOrThrow } from "../../utils/password-policy";
 
 const TEMP_PASSWORD_REQUIRED_TOKEN = "TEMP_PASSWORD_REQUIRED";
 const GENERIC_TEMP_PASSWORD_CHANGE_ERROR = "Unable to change temporary password";
 const SYSTEM_ENTITY_ID = "00000000-0000-0000-0000-000000000000";
+const FIRST_LOGIN_OTP_EXPIRY_MINUTES = 10;
+const FIRST_LOGIN_OTP_MAX_ATTEMPTS = 5;
 
 function toAuthError(message: string, statusCode: number) {
   return Object.assign(new Error(message), { statusCode });
@@ -36,6 +43,10 @@ const userSelect = {
   failedLoginAttempts: true,
   passwordResetToken: true,
   passwordResetExpiresAt: true,
+  mustChangePassword: true,
+  firstLoginOtpHash: true,
+  firstLoginOtpExpiresAt: true,
+  firstLoginOtpAttempts: true,
   createdAt: true,
   updatedAt: true,
   deletedAt: true,
@@ -100,8 +111,8 @@ export async function register(dto: RegisterDto) {
         userId: newUser.id,
         studentNumber: dto.studentNumber,
         firstName: dto.firstName,
-        middleName: dto.middleName,
-        lastName: dto.lastName,
+        fatherName: dto.fatherName,
+        grandfatherName: dto.grandfatherName,
         gender: dto.gender,
         studyYear: dto.studyYear,
         department: dto.department,
@@ -151,8 +162,18 @@ export async function register(dto: RegisterDto) {
 }
 
 export async function login(dto: LoginDto) {
-  const user = await prisma.user.findUnique({
-    where: { email: dto.email },
+  const identifierFilters: Prisma.UserWhereInput[] = [];
+  if (dto.email) {
+    identifierFilters.push({ email: dto.email });
+  }
+  if (dto.studentNumber) {
+    identifierFilters.push({ student: { is: { studentNumber: dto.studentNumber } } });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: identifierFilters,
+    },
     select: {
       ...userSelect,
       passwordHash: true,
@@ -160,7 +181,7 @@ export async function login(dto: LoginDto) {
   });
 
   if (!user) {
-    throw toAuthError("Invalid email or password", 401);
+    throw toAuthError("Invalid login credentials", 401);
   }
 
   if (user.status !== UserStatus.ACTIVE || user.deletedAt !== null) {
@@ -222,11 +243,30 @@ export async function login(dto: LoginDto) {
       },
     });
 
-    throw toAuthError("Invalid email or password", 401);
+    throw toAuthError("Invalid login credentials", 401);
   }
 
   const { passwordHash: _passwordHash, ...userWithoutPassword } = user;
   const sanitized = sanitizeUser(userWithoutPassword);
+
+  if (user.mustChangePassword && sanitized.roles.includes(RoleCode.STUDENT)) {
+    const otp = await issueFirstLoginOtp(user.id);
+
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: user.id,
+        entityName: "User",
+        entityId: user.id,
+        action: "FIRST_LOGIN_OTP_ISSUED",
+      },
+    });
+
+    return {
+      requiresFirstLoginOtp: true,
+      message: "OTP sent to your registered email. Verify OTP and set a new password.",
+      ...(env.NODE_ENV === "development" ? { otpPreview: otp } : {}),
+    };
+  }
 
   if (hasPrivilegedRole(sanitized.roles) && user.passwordResetToken === TEMP_PASSWORD_REQUIRED_TOKEN) {
     if (user.passwordResetExpiresAt && user.passwordResetExpiresAt < new Date()) {
@@ -258,6 +298,107 @@ export async function login(dto: LoginDto) {
   });
 
   const issued = await buildTokenResponse(user.id, sanitized.roles, user.email, sanitized);
+  return {
+    token: issued.token,
+    refreshToken: issued.refreshToken,
+    user: issued.user,
+  };
+}
+
+export async function verifyFirstLoginOtp(dto: VerifyFirstLoginOtpDto) {
+  const identifierFilters: Prisma.UserWhereInput[] = [];
+  if (dto.email) {
+    identifierFilters.push({ email: dto.email });
+  }
+  if (dto.studentNumber) {
+    identifierFilters.push({ student: { is: { studentNumber: dto.studentNumber } } });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: identifierFilters,
+      status: UserStatus.ACTIVE,
+      deletedAt: null,
+    },
+    select: {
+      ...userSelect,
+      passwordHash: true,
+    },
+  });
+
+  if (!user) {
+    throw toAuthError("Invalid OTP verification request", 400);
+  }
+
+  const roles = user.userRoles.map((item) => item.role.code);
+  if (!roles.includes(RoleCode.STUDENT) || !user.mustChangePassword) {
+    throw toAuthError("First login OTP is not required for this account", 400);
+  }
+
+  if (!user.firstLoginOtpHash || !user.firstLoginOtpExpiresAt) {
+    throw toAuthError("OTP not issued or expired. Please login again to request a new OTP", 400);
+  }
+
+  if (user.firstLoginOtpAttempts >= FIRST_LOGIN_OTP_MAX_ATTEMPTS) {
+    throw toAuthError("OTP attempts exceeded. Please login again to request a new OTP", 429);
+  }
+
+  if (user.firstLoginOtpExpiresAt < new Date()) {
+    throw toAuthError("OTP expired. Please login again to request a new OTP", 400);
+  }
+
+  const incomingHash = hashToken(dto.otp);
+  if (incomingHash !== user.firstLoginOtpHash) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        firstLoginOtpAttempts: { increment: 1 },
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorUserId: user.id,
+        entityName: "User",
+        entityId: user.id,
+        action: "FIRST_LOGIN_OTP_INVALID",
+      },
+    });
+
+    throw toAuthError("Invalid OTP", 400);
+  }
+
+  await assertStrongPasswordOrThrow(dto.newPassword);
+
+  const newPasswordHash = await bcrypt.hash(dto.newPassword, env.BCRYPT_ROUNDS);
+
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash: newPasswordHash,
+      mustChangePassword: false,
+      firstLoginOtpHash: null,
+      firstLoginOtpExpiresAt: null,
+      firstLoginOtpAttempts: 0,
+      failedLoginAttempts: 0,
+      passwordResetToken: null,
+      passwordResetExpiresAt: null,
+    },
+    select: userSelect,
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      actorUserId: user.id,
+      entityName: "User",
+      entityId: user.id,
+      action: "FIRST_LOGIN_OTP_VERIFIED",
+    },
+  });
+
+  const sanitized = sanitizeUser(updated);
+  const issued = await buildTokenResponse(updated.id, sanitized.roles, updated.email, sanitized);
+
   return {
     token: issued.token,
     refreshToken: issued.refreshToken,
@@ -586,4 +727,20 @@ async function revokeAllActiveRefreshSessions(
       revokedReason: reason,
     },
   });
+}
+
+async function issueFirstLoginOtp(userId: string) {
+  const otp = `${Math.floor(100000 + Math.random() * 900000)}`;
+  const expiresAt = new Date(Date.now() + FIRST_LOGIN_OTP_EXPIRY_MINUTES * 60 * 1000);
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      firstLoginOtpHash: hashToken(otp),
+      firstLoginOtpExpiresAt: expiresAt,
+      firstLoginOtpAttempts: 0,
+    },
+  });
+
+  return otp;
 }

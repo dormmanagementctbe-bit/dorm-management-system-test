@@ -3,7 +3,7 @@ import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 interface AllocationData {
   student: {
     firstName: string;
-    lastName: string;
+    grandfatherName: string;
     studentNumber: string;
     user?: { email: string } | null;
   };
@@ -99,7 +99,7 @@ export async function generateAllocationPdf(allocation: AllocationData): Promise
   });
   y -= 25;
 
-  drawField("Student Name:", `${allocation.student.firstName} ${allocation.student.lastName}`);
+  drawField("Student Name:", `${allocation.student.firstName} ${allocation.student.grandfatherName}`);
   drawField("Student Number:", allocation.student.studentNumber);
   if (allocation.student.user?.email) {
     drawField("Email:", allocation.student.user.email);

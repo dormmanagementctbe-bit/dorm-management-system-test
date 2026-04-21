@@ -2,9 +2,9 @@ import { z } from "zod";
 
 export const updateStudentSchema = z.object({
   firstName: z.string().min(1).optional(),
-  middleName: z.string().optional(),
-  lastName: z.string().min(1).optional(),
-  studyYear: z.coerce.number().int().min(1).max(8).optional(),
+  fatherName: z.string().optional(),
+  grandfatherName: z.string().min(1).optional(),
+  studyYear: z.enum(["I", "II", "III", "IV", "V"]).optional(),
   phone: z.string().optional(),
   guardianName: z.string().optional(),
   guardianPhone: z.string().optional(),

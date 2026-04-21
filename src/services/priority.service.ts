@@ -11,7 +11,7 @@
  */
 
 interface ScoringStudent {
-  studyYear: number;
+  studyYear: "I" | "II" | "III" | "IV" | "V";
   hasDisability: boolean;
 }
 
@@ -36,8 +36,15 @@ export function calculatePriorityScore(
 ): PriorityScore {
   let baseScore = 0;
 
-  // Year 1 = 5 pts, Year 2 = 10 pts, ..., Year 8+ = 40 pts
-  baseScore += Math.min(student.studyYear, 8) * 5;
+  // Year I = 5 pts, Year II = 10 pts, ..., Year V = 25 pts
+  const yearToRank: Record<ScoringStudent["studyYear"], number> = {
+    I: 1,
+    II: 2,
+    III: 3,
+    IV: 4,
+    V: 5,
+  };
+  baseScore += yearToRank[student.studyYear] * 5;
 
   // Early submission bonus (max 10 pts)
   // Decays by 1 point for every 3 days after the application window opened

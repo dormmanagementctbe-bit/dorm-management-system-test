@@ -31,6 +31,16 @@ enum Gender {
   @@map("gender")
 }
 
+enum StudyYearRoman {
+  I
+  II
+  III
+  IV
+  V
+
+  @@map("study_year_roman")
+}
+
 enum DormGenderRestriction {
   MALE_ONLY
   FEMALE_ONLY
@@ -136,6 +146,27 @@ enum SupportMode {
   @@map("support_mode")
 }
 
+enum ApplicationDocumentType {
+  ID_IMAGE
+  HIGHSCHOOL_TRANSCRIPT
+  ENTRANCE_EXAM_RESULT
+  KEBELE_VERIFICATION
+  STAFF_RECOGNITION
+  MEDICAL_DOCUMENT
+
+  @@map("application_document_type")
+}
+
+enum ApplicationDocumentStatus {
+  UPLOADED
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+  ON_ARRIVAL_VERIFIED
+
+  @@map("application_document_status")
+}
+
 // ─────────────────────────────────────────
 // Models
 // ─────────────────────────────────────────
@@ -150,6 +181,10 @@ model User {
   failedLoginAttempts    Int        @default(0) @map("failed_login_attempts")
   passwordResetToken     String?    @map("password_reset_token")
   passwordResetExpiresAt DateTime?  @map("password_reset_expires_at")
+  mustChangePassword     Boolean    @default(false) @map("must_change_password")
+  firstLoginOtpHash      String?    @map("first_login_otp_hash")
+  firstLoginOtpExpiresAt DateTime?  @map("first_login_otp_expires_at")
+  firstLoginOtpAttempts  Int        @default(0) @map("first_login_otp_attempts")
   createdAt              DateTime   @default(now()) @map("created_at")
   updatedAt              DateTime   @updatedAt @map("updated_at")
   deletedAt              DateTime?  @map("deleted_at")
@@ -162,6 +197,7 @@ model User {
   assignedMaintenanceRequests  MaintenanceRequest[]      @relation("AssignedTo")
   allocatedBy                  Allocation[]              @relation("AllocatedBy")
   reviewedApplications         DormApplication[]         @relation("ReviewedBy")
+  reviewedApplicationDocuments ApplicationDocument[]     @relation("ApplicationDocumentReviewedBy")
   createdCityPriorityRules     CityPriorityRule[]        @relation("CreatedBy")
   createdDisabilityRules       DisabilityPriorityRule[]  @relation("CreatedBy")
   auditLogs                    AuditLog[]
@@ -205,10 +241,10 @@ model Student {
   userId                 String    @unique @map("user_id") @db.Uuid
   studentNumber          String    @unique @map("student_number")
   firstName              String    @map("first_name")
-  middleName             String?   @map("middle_name")
-  lastName               String    @map("last_name")
+  fatherName             String?   @map("father_name")
+  grandfatherName        String    @map("grandfather_name")
   gender                 Gender
-  studyYear              Int       @map("study_year")
+  studyYear              StudyYearRoman @map("study_year")
   department             String?
   phone                  String?
   guardianName           String?   @map("guardian_name")
@@ -414,6 +450,13 @@ model DormApplication {
   academicYearId         String            @map("academic_year_id") @db.Uuid
   semesterId             String            @map("semester_id") @db.Uuid
   currentCity            String?           @map("current_city")
+  currentSubcity         String?           @map("current_subcity")
+  currentWoreda          String?           @map("current_woreda")
+  hasDisability          Boolean           @default(false) @map("has_disability")
+  disabilityType         String?           @map("disability_type")
+  medicalConditions      String[]          @default([]) @map("medical_conditions")
+  canEditUntil           DateTime?         @map("can_edit_until")
+  editOverrideUntil      DateTime?         @map("edit_override_until")
   basePriorityScore      Int               @default(0) @map("base_priority_score")
   disabilityBonusScore   Int               @default(0) @map("disability_bonus_score")
   manualAdjustmentScore  Int               @default(0) @map("manual_adjustment_score")
@@ -432,13 +475,37 @@ model DormApplication {
   semester           Semester                @relation(fields: [semesterId], references: [id])
   reviewedBy         User?                   @relation("ReviewedBy", fields: [reviewedByUserId], references: [id])
   preferences        ApplicationPreference[]
+  documents          ApplicationDocument[]
   allocation         Allocation?
 
-  @@unique([studentId, academicYearId, semesterId])
+  @@unique([studentId, academicYearId])
   @@index([academicYearId, semesterId, status])
   @@index([semesterId, status])
   @@index([finalPriorityScore])
   @@map("dorm_applications")
+}
+
+model ApplicationDocument {
+  id             String                    @id @default(uuid()) @db.Uuid
+  applicationId  String                    @map("application_id") @db.Uuid
+  type           ApplicationDocumentType
+  originalName   String                    @map("original_name")
+  storagePath    String                    @map("storage_path")
+  mimeType       String                    @map("mime_type")
+  sizeBytes      Int                       @map("size_bytes")
+  status         ApplicationDocumentStatus @default(UPLOADED)
+  reviewedAt     DateTime?                 @map("reviewed_at")
+  reviewedByUserId String?                 @map("reviewed_by_user_id") @db.Uuid
+  reviewNote     String?                   @map("review_note")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  application    DormApplication           @relation(fields: [applicationId], references: [id])
+  reviewedBy     User?                     @relation("ApplicationDocumentReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@unique([applicationId, type])
+  @@index([type, status])
+  @@map("application_documents")
 }
 
 model ApplicationPreference {

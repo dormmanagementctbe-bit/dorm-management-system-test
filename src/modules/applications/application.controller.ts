@@ -1,5 +1,10 @@
 import { Request, Response, NextFunction } from "express";
-import { createApplicationSchema, reviewApplicationSchema } from "./application.dto";
+import {
+  createApplicationSchema,
+  reviewApplicationSchema,
+  setEditOverrideSchema,
+  updateApplicationSchema,
+} from "./application.dto";
 import * as appService from "./application.service";
 import { sendSuccess, sendPaginated } from "../../utils/helpers";
 
@@ -31,6 +36,17 @@ export async function getMy(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function updateMy(req: Request, res: Response, next: NextFunction) {
+  try {
+    const dto = updateApplicationSchema.parse(req.body);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const application = await appService.updateMyApplication(req.user!.id, id, dto);
+    sendSuccess(res, application, "Application updated successfully");
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -56,6 +72,17 @@ export async function runAllocation(req: Request, res: Response, next: NextFunct
   try {
     const result = await appService.runAllocation(req.user!.id);
     sendSuccess(res, result, `Allocation complete: ${result.allocated} allocated, ${result.waitlisted} waitlisted`);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function setEditOverride(req: Request, res: Response, next: NextFunction) {
+  try {
+    const dto = setEditOverrideSchema.parse(req.body);
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const updated = await appService.setApplicationEditOverride(id, req.user!.id, dto);
+    sendSuccess(res, updated, "Application edit override updated");
   } catch (err) {
     next(err);
   }

@@ -9,7 +9,7 @@ export async function listStudents(query: { page?: string; limit?: string; searc
     ? {
         OR: [
           { firstName: { contains: query.search, mode: "insensitive" as const } },
-          { lastName: { contains: query.search, mode: "insensitive" as const } },
+          { grandfatherName: { contains: query.search, mode: "insensitive" as const } },
           { studentNumber: { contains: query.search, mode: "insensitive" as const } },
         ],
       }
