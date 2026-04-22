@@ -1,11 +1,12 @@
 import { Request, Response, NextFunction } from "express";
-import { createRoomSchema, updateRoomSchema } from "./room.dto";
+import { createRoomSchema, listRoomsQuerySchema, updateRoomSchema } from "./room.dto";
 import * as roomService from "./room.service";
 import { sendSuccess, sendPaginated } from "../../utils/helpers";
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const { rooms, meta } = await roomService.listRooms(req.query as Record<string, string>);
+    const query = listRoomsQuerySchema.parse(req.query);
+    const { rooms, meta } = await roomService.listRooms(query);
     sendPaginated(res, rooms, meta);
   } catch (err) {
     next(err);

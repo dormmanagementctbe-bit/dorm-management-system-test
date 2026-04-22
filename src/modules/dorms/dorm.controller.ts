@@ -1,11 +1,18 @@
 import { Request, Response, NextFunction } from "express";
-import { createDormSchema, updateDormSchema } from "./dorm.dto";
+import {
+  createDormSchema,
+  dormBedsQuerySchema,
+  dormRoomsQuerySchema,
+  listDormsQuerySchema,
+  updateDormSchema,
+} from "./dorm.dto";
 import * as dormService from "./dorm.service";
 import { sendSuccess, sendPaginated } from "../../utils/helpers";
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const { dorms, meta } = await dormService.listDorms(req.query as Record<string, string>);
+    const query = listDormsQuerySchema.parse(req.query);
+    const { dorms, meta } = await dormService.listDorms(query);
     sendPaginated(res, dorms, meta);
   } catch (err) {
     next(err);
@@ -17,6 +24,16 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const dorm = await dormService.getDormById(id);
     sendSuccess(res, dorm);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getDetails(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const details = await dormService.getDormDetails(id);
+    sendSuccess(res, details);
   } catch (err) {
     next(err);
   }
@@ -46,11 +63,20 @@ export async function update(req: Request, res: Response, next: NextFunction) {
 export async function getRooms(req: Request, res: Response, next: NextFunction) {
   try {
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const { rooms, meta } = await dormService.getDormRooms(
-      id,
-      req.query as Record<string, string>
-    );
+    const query = dormRoomsQuerySchema.parse(req.query);
+    const { rooms, meta } = await dormService.getDormRooms(id, query);
     sendPaginated(res, rooms, meta);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getBeds(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const query = dormBedsQuerySchema.parse(req.query);
+    const { beds, meta } = await dormService.getDormBeds(id, query);
+    sendPaginated(res, beds, meta);
   } catch (err) {
     next(err);
   }

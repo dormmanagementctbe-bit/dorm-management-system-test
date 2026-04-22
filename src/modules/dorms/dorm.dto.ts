@@ -27,5 +27,41 @@ export const updateDormSchema = dormBaseSchema.partial().transform(({ buildingId
   ...(blockId || buildingId ? { blockId: blockId ?? buildingId } : {}),
 }));
 
+export const listDormsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  active: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === "true")),
+});
+
+export const dormRoomsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  status: z.enum(["ACTIVE", "INACTIVE", "MAINTENANCE"]).optional(),
+  occupancy: z.enum(["all", "available", "occupied"]).optional(),
+  isActive: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === "true")),
+});
+
+export const dormBedsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  status: z
+    .enum(["AVAILABLE", "OCCUPIED", "RESERVED", "MAINTENANCE", "INACTIVE"])
+    .optional(),
+  roomId: z.string().uuid().optional(),
+  isActive: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === "true")),
+});
+
 export type CreateDormDto = z.infer<typeof createDormSchema>;
 export type UpdateDormDto = z.infer<typeof updateDormSchema>;
+export type ListDormsQueryDto = z.infer<typeof listDormsQuerySchema>;
+export type DormRoomsQueryDto = z.infer<typeof dormRoomsQuerySchema>;
+export type DormBedsQueryDto = z.infer<typeof dormBedsQuerySchema>;
