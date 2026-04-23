@@ -1,5 +1,6 @@
 import { prisma } from "../../config/database";
 import { parsePagination, buildMeta } from "../../utils/helpers";
+import { attachCompatibilityRoomToAllocation } from "../../utils/dorm-compat";
 import {
   CreateApplicationDto,
   ReviewApplicationDto,
@@ -18,7 +19,7 @@ function isApplicationEditable(app: {
   canEditUntil: Date | null;
   editOverrideUntil: Date | null;
 }) {
-  if (app.status !== "SUBMITTED") return false;
+  if (app.status !== "PENDING") return false;
 
   const now = new Date();
   if (app.editOverrideUntil && app.editOverrideUntil > now) {
@@ -26,6 +27,73 @@ function isApplicationEditable(app: {
   }
 
   return Boolean(app.canEditUntil && app.canEditUntil > now);
+}
+
+async function loadDormMap(dormIds: string[]) {
+  const uniqueDormIds = [...new Set(dormIds)];
+  if (uniqueDormIds.length === 0) {
+    return new Map<string, Awaited<ReturnType<typeof prisma.dorm.findMany>>[number]>();
+  }
+
+  const dorms = await prisma.dorm.findMany({
+    where: { id: { in: uniqueDormIds } },
+    include: { block: true },
+  });
+
+  return new Map(dorms.map((dorm) => [dorm.id, dorm]));
+}
+
+async function ensurePreferredDormIdsValid(preferredDormIds?: string[]) {
+  const dormMap = await loadDormMap(preferredDormIds ?? []);
+  if ((preferredDormIds?.length ?? 0) !== dormMap.size) {
+    throw toHttpError("One or more preferred dorm IDs are invalid", 400);
+  }
+  return dormMap;
+}
+
+function buildPreferenceViews(
+  preferredDormIds: string[],
+  dormMap: Map<string, Awaited<ReturnType<typeof prisma.dorm.findMany>>[number]>
+) {
+  return preferredDormIds
+    .map((dormId, index) => {
+      const dorm = dormMap.get(dormId);
+      if (!dorm) return null;
+
+      return {
+        dormId,
+        preferenceRank: index + 1,
+        dorm,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+}
+
+async function decorateApplications<T extends { preferredDormIds: string[]; allocation?: unknown | null }>(
+  applications: T[]
+) {
+  const dormMap = await loadDormMap(applications.flatMap((application) => application.preferredDormIds));
+
+  return applications.map((application) => {
+    const next: T & {
+      preferences: ReturnType<typeof buildPreferenceViews>;
+      allocation?: unknown | null;
+    } = {
+      ...application,
+      preferences: buildPreferenceViews(application.preferredDormIds, dormMap),
+    };
+
+    if (application.allocation && typeof application.allocation === "object") {
+      const allocation = application.allocation as { bed?: { dorm?: unknown } };
+      if (allocation.bed?.dorm) {
+        next.allocation = attachCompatibilityRoomToAllocation(
+          application.allocation as { bed: { dorm: Parameters<typeof attachCompatibilityRoomToAllocation>[0]["bed"]["dorm"] } }
+        );
+      }
+    }
+
+    return next;
+  });
 }
 
 // Student submits application
@@ -58,6 +126,8 @@ export async function createApplication(userId: string, dto: CreateApplicationDt
     throw toHttpError("Only one application is allowed per academic year", 409);
   }
 
+  const preferredDormIds = dto.preferredDormIds ?? [];
+  const preferredDormMap = await ensurePreferredDormIdsValid(preferredDormIds);
   const scores = calculatePriorityScore(student, { submittedAt: now }, academicYear);
 
   const application = await prisma.dormApplication.create({
@@ -76,14 +146,7 @@ export async function createApplication(userId: string, dto: CreateApplicationDt
       basePriorityScore: scores.basePriorityScore,
       disabilityBonusScore: scores.disabilityBonusScore,
       finalPriorityScore: scores.finalPriorityScore,
-      preferences: dto.preferredDormIds
-        ? {
-            create: dto.preferredDormIds.map((dormId, index) => ({
-              dormId,
-              preferenceRank: index + 1,
-            })),
-          }
-        : undefined,
+      preferredDormIds,
       documents: {
         create: dto.documents.map((document) => ({
           type: document.type,
@@ -97,7 +160,6 @@ export async function createApplication(userId: string, dto: CreateApplicationDt
     },
     include: {
       documents: true,
-      preferences: true,
     },
   });
 
@@ -107,7 +169,10 @@ export async function createApplication(userId: string, dto: CreateApplicationDt
     type: "APPLICATION",
   });
 
-  return application;
+  return {
+    ...application,
+    preferences: buildPreferenceViews(preferredDormIds, preferredDormMap),
+  };
 }
 
 // Student updates own application inside edit window
@@ -133,6 +198,9 @@ export async function updateMyApplication(userId: string, applicationId: string,
     throw toHttpError("Application is no longer editable", 403);
   }
 
+  const nextPreferredDormIds = dto.preferredDormIds ?? existing.preferredDormIds;
+  const preferredDormMap = await ensurePreferredDormIdsValid(nextPreferredDormIds);
+
   const updated = await prisma.$transaction(async (tx) => {
     if (dto.documents) {
       await tx.applicationDocument.deleteMany({
@@ -154,17 +222,6 @@ export async function updateMyApplication(userId: string, applicationId: string,
       });
     }
 
-    if (dto.preferredDormIds) {
-      await tx.applicationPreference.deleteMany({ where: { applicationId } });
-      await tx.applicationPreference.createMany({
-        data: dto.preferredDormIds.map((dormId, index) => ({
-          applicationId,
-          dormId,
-          preferenceRank: index + 1,
-        })),
-      });
-    }
-
     return tx.dormApplication.update({
       where: { id: applicationId },
       data: {
@@ -173,16 +230,19 @@ export async function updateMyApplication(userId: string, applicationId: string,
         hasDisability: dto.hasDisability,
         disabilityType: dto.disabilityType === null ? null : dto.disabilityType,
         medicalConditions: dto.medicalConditions,
+        preferredDormIds: dto.preferredDormIds,
         reason: dto.reason,
       },
       include: {
         documents: true,
-        preferences: { include: { dorm: true } },
       },
     });
   });
 
-  return updated;
+  return {
+    ...updated,
+    preferences: buildPreferenceViews(nextPreferredDormIds, preferredDormMap),
+  };
 }
 
 // Admin lists all applications
@@ -205,7 +265,6 @@ export async function listApplications(query: {
       include: {
         student: { select: { firstName: true, grandfatherName: true, studentNumber: true } },
         academicYear: { select: { label: true } },
-        preferences: { include: { dorm: { select: { name: true } } } },
         documents: true,
       },
       orderBy: { finalPriorityScore: "desc" },
@@ -213,7 +272,10 @@ export async function listApplications(query: {
     prisma.dormApplication.count({ where }),
   ]);
 
-  return { applications, meta: buildMeta(total, page, limit) };
+  return {
+    applications: await decorateApplications(applications),
+    meta: buildMeta(total, page, limit),
+  };
 }
 
 // Student views own applications
@@ -221,34 +283,53 @@ export async function getMyApplications(userId: string) {
   const student = await prisma.student.findUnique({ where: { userId } });
   if (!student) throw toHttpError("Student profile not found", 404);
 
-  return prisma.dormApplication.findMany({
+  const applications = await prisma.dormApplication.findMany({
     where: { studentId: student.id },
     include: {
       academicYear: true,
       semester: true,
-      preferences: { include: { dorm: true } },
       documents: true,
-      allocation: true,
+      allocation: {
+        include: {
+          bed: {
+            include: {
+              dorm: { include: { block: true } },
+            },
+          },
+          dorm: { include: { block: true } },
+        },
+      },
     },
     orderBy: { submittedAt: "desc" },
   });
+
+  return decorateApplications(applications);
 }
 
 // Get single application
 export async function getApplicationById(id: string) {
-  const app = await prisma.dormApplication.findUnique({
+  const application = await prisma.dormApplication.findUnique({
     where: { id },
     include: {
       student: true,
       academicYear: true,
       semester: true,
       documents: true,
-      preferences: { include: { dorm: true } },
-      allocation: { include: { bed: { include: { room: { include: { dorm: true } } } } } },
+      allocation: {
+        include: {
+          bed: {
+            include: {
+              dorm: { include: { block: true } },
+            },
+          },
+          dorm: { include: { block: true } },
+        },
+      },
     },
   });
-  if (!app) throw toHttpError("Application not found", 404);
-  return app;
+  if (!application) throw toHttpError("Application not found", 404);
+
+  return (await decorateApplications([application]))[0];
 }
 
 // Admin reviews application
@@ -258,8 +339,8 @@ export async function reviewApplication(id: string, adminId: string, dto: Review
     include: { student: true },
   });
   if (!app) throw toHttpError("Application not found", 404);
-  if (app.status !== "SUBMITTED") {
-    throw toHttpError("Only SUBMITTED applications can be reviewed", 400);
+  if (app.status !== "PENDING") {
+    throw toHttpError("Only PENDING applications can be reviewed", 400);
   }
 
   const updated = await prisma.dormApplication.update({
@@ -328,14 +409,14 @@ export async function runAllocation(adminId: string) {
 
   const applications = await prisma.dormApplication.findMany({
     where: { academicYearId: academicYear.id, status: "APPROVED" },
-    include: { student: { select: { userId: true } }, preferences: true },
+    include: { student: { select: { userId: true } } },
     orderBy: { finalPriorityScore: "desc" },
   });
 
   const beds = await prisma.bed.findMany({
     where: { status: "AVAILABLE", isActive: true },
     include: {
-      room: { include: { dorm: true } },
+      dorm: { include: { block: true } },
       allocations: { where: { status: { in: ["ACTIVE", "PENDING_CHECKIN"] } } },
     },
   });
@@ -344,12 +425,11 @@ export async function runAllocation(adminId: string) {
   let waitlisted = 0;
 
   for (const application of applications) {
-    const preferredDormIds = application.preferences
-      .sort((a, b) => a.preferenceRank - b.preferenceRank)
-      .map((p) => p.dormId);
+    const preferredDormIds = application.preferredDormIds;
 
-    const bed = beds.find((b) => preferredDormIds.includes(b.room.dormId) && b.allocations.length === 0)
-      ?? beds.find((b) => b.allocations.length === 0);
+    const bed =
+      beds.find((candidate) => preferredDormIds.includes(candidate.dormId) && candidate.allocations.length === 0) ??
+      beds.find((candidate) => candidate.allocations.length === 0);
 
     if (!bed) {
       await prisma.dormApplication.update({
@@ -365,6 +445,8 @@ export async function runAllocation(adminId: string) {
         data: {
           studentId: application.studentId,
           bedId: bed.id,
+          dormId: bed.dormId,
+          blockId: bed.dorm.blockId,
           applicationId: application.id,
           academicYearId: academicYear.id,
           semesterId: application.semesterId,
@@ -386,7 +468,7 @@ export async function runAllocation(adminId: string) {
 
     await notifyUser(application.student.userId, {
       title: "Room Allocated",
-      message: `You have been allocated Bed ${bed.bedNumber} in ${bed.room.dorm.name}, Room ${bed.room.roomNumber} for ${academicYear.label}.`,
+      message: `You have been allocated Bed ${bed.bedNumber} in ${bed.dorm.name}, Room ${bed.dorm.code} for ${academicYear.label}.`,
       type: "ALLOCATION",
     });
 

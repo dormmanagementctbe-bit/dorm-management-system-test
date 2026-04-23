@@ -1,5 +1,6 @@
 import { prisma } from "../../config/database";
 import { parsePagination, buildMeta } from "../../utils/helpers";
+import { attachCompatibilityRoomToAllocation } from "../../utils/dorm-compat";
 import { UpdateStudentDto } from "./student.dto";
 
 export async function listStudents(query: { page?: string; limit?: string; search?: string }) {
@@ -51,12 +52,15 @@ export async function updateStudent(id: string, dto: UpdateStudentDto) {
 }
 
 export async function getStudentAllocation(studentId: string) {
-  return prisma.allocation.findFirst({
+  const allocation = await prisma.allocation.findFirst({
     where: { studentId, status: { in: ["ACTIVE", "PENDING_CHECKIN"] } },
     include: {
-      bed: { include: { room: { include: { dorm: true } } } },
+      bed: { include: { dorm: { include: { block: true } } } },
+      dorm: { include: { block: true } },
       academicYear: true,
     },
     orderBy: { createdAt: "desc" },
   });
+
+  return allocation ? attachCompatibilityRoomToAllocation(allocation) : null;
 }

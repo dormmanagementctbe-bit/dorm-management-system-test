@@ -4,7 +4,6 @@ import {
   loginSchema,
   refreshTokenSchema,
   changeTemporaryPasswordSchema,
-  verifyFirstLoginOtpSchema,
 } from "./auth.dto";
 import * as authService from "./auth.service";
 import { sendSuccess } from "../../utils/helpers";
@@ -54,16 +53,6 @@ export async function changeTemporaryPassword(req: Request, res: Response, next:
     const dto = changeTemporaryPasswordSchema.parse(req.body);
     const result = await authService.changeTemporaryPassword(dto);
     sendSuccess(res, result, "Password changed successfully");
-  } catch (err) {
-    next(err);
-  }
-}
-
-export async function verifyFirstLoginOtp(req: Request, res: Response, next: NextFunction) {
-  try {
-    const dto = verifyFirstLoginOtpSchema.parse(req.body);
-    const result = await authService.verifyFirstLoginOtp(dto);
-    sendSuccess(res, result, "OTP verified and password changed successfully");
   } catch (err) {
     next(err);
   }

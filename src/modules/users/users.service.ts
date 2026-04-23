@@ -1,10 +1,12 @@
 import bcrypt from "bcryptjs";
+import { randomBytes } from "crypto";
 import { Prisma, RoleCode, UserStatus } from "../../../generated/prisma/index";
 import { prisma } from "../../config/database";
 import { env } from "../../config/env";
 import { buildMeta, parsePagination } from "../../utils/helpers";
 import { sanitizeUser } from "../../utils/sanitize-user";
 import { assertStrongPasswordOrThrow } from "../../utils/password-policy";
+import { sendTemporaryPasswordEmail } from "../../services/email.service";
 import {
   CreateUserDto,
   ListUsersQueryDto,
@@ -98,6 +100,11 @@ function targetRoleCodes(user: { userRoles: Array<{ role: { code: RoleCode } }> 
   return user.userRoles.map((item) => item.role.code);
 }
 
+function generateTemporaryPassword() {
+  const raw = randomBytes(12).toString("base64url");
+  return `Tmp#${raw}1aA`;
+}
+
 export async function getCurrentUser(userId: string) {
   const user = await prisma.user.findFirst({
     where: {
@@ -122,7 +129,6 @@ export async function updateCurrentUser(userId: string, dto: UpdateMeDto) {
       id: true,
       status: true,
       deletedAt: true,
-      passwordHash: true,
       student: { select: { id: true } },
     },
   });
@@ -131,38 +137,20 @@ export async function updateCurrentUser(userId: string, dto: UpdateMeDto) {
     throw httpError("User not found", 404);
   }
 
-  if (dto.newPassword) {
-    await assertStrongPasswordOrThrow(dto.newPassword);
-
-    const isCurrentPasswordValid = await bcrypt.compare(
-      dto.currentPassword ?? "",
-      user.passwordHash
-    );
-
-    if (!isCurrentPasswordValid) {
-      throw httpError("Current password is incorrect", 401);
-    }
-  }
-
   await prisma.$transaction(async (tx) => {
-    if (dto.newPassword) {
-      await tx.user.update({
-        where: { id: user.id },
-        data: {
-          passwordHash: await bcrypt.hash(dto.newPassword, env.BCRYPT_ROUNDS),
-        },
-      });
-    }
-
     if (user.student) {
       await tx.student.update({
         where: { userId: user.id },
         data: {
-          firstName: dto.firstName,
-          fatherName: dto.fatherName,
-          grandfatherName: dto.grandfatherName,
           phone: dto.phone,
           department: dto.department,
+          guardianName: dto.guardianName,
+          guardianPhone: dto.guardianPhone,
+          emergencyContactName: dto.emergencyContactName,
+          emergencyContactPhone: dto.emergencyContactPhone,
+          hasDisability: dto.hasDisability,
+          disabilityNotes: dto.disabilityNotes,
+          scholarshipNotes: dto.scholarshipNotes,
         },
       });
     }
@@ -175,7 +163,6 @@ export async function updateCurrentUser(userId: string, dto: UpdateMeDto) {
         action: "USER_SELF_UPDATE",
         newValues: {
           updatedProfile: true,
-          changedPassword: Boolean(dto.newPassword),
         },
       },
     });
@@ -335,9 +322,19 @@ export async function createUser(
     throw httpError("studentProfile is required when assigning STUDENT role", 400);
   }
 
-  await assertStrongPasswordOrThrow(dto.password);
+  const isStudent = dto.roleCodes.includes(RoleCode.STUDENT);
+  // Student onboarding always uses a system-generated temporary password so the
+  // email contains a valid plain secret and avoids accidental hashed input.
+  const temporaryPassword = isStudent
+    ? generateTemporaryPassword()
+    : dto.password;
+  if (!temporaryPassword) {
+    throw httpError("password is required for non-student accounts", 400);
+  }
 
-  const passwordHash = await bcrypt.hash(dto.password, env.BCRYPT_ROUNDS);
+  await assertStrongPasswordOrThrow(temporaryPassword);
+
+  const passwordHash = await bcrypt.hash(temporaryPassword, env.BCRYPT_ROUNDS);
 
   const user = await prisma.$transaction(async (tx) => {
     const createdUser = await tx.user.create({
@@ -345,7 +342,15 @@ export async function createUser(
         email: dto.email,
         passwordHash,
         status: UserStatus.ACTIVE,
-        mustChangePassword: dto.roleCodes.includes(RoleCode.STUDENT),
+        mustChangePassword: isStudent,
+        ...(isStudent
+          ? {
+              passwordResetToken: "TEMP_PASSWORD_REQUIRED",
+              passwordResetExpiresAt: new Date(
+                Date.now() + env.TEMP_PASSWORD_EXPIRY_DAYS * 24 * 60 * 60 * 1000
+              ),
+            }
+          : {}),
         ...(includesPrivilegedAccountRole(dto.roleCodes)
           ? {
               passwordResetToken: "TEMP_PASSWORD_REQUIRED",
@@ -407,7 +412,19 @@ export async function createUser(
     return fullUser;
   });
 
-  return sanitizeUser(user);
+  if (isStudent && dto.studentProfile) {
+    await sendTemporaryPasswordEmail({
+      to: dto.email,
+      studentNumber: dto.studentProfile.studentNumber,
+      temporaryPassword,
+      expiryDays: env.TEMP_PASSWORD_EXPIRY_DAYS,
+    });
+  }
+
+  return {
+    ...sanitizeUser(user),
+    ...(env.NODE_ENV === "development" && isStudent ? { temporaryPasswordPreview: temporaryPassword } : {}),
+  };
 }
 
 export async function updateUserById(

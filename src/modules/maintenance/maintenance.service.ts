@@ -1,11 +1,19 @@
 import { prisma } from "../../config/database";
 import { parsePagination, buildMeta } from "../../utils/helpers";
+import { attachCompatibilityRoomToMaintenanceRequest } from "../../utils/dorm-compat";
 import { CreateMaintenanceDto, UpdateMaintenanceDto } from "./maintenance.dto";
 
 export async function createRequest(userId: string, dto: CreateMaintenanceDto) {
-  return prisma.maintenanceRequest.create({
+  const request = await prisma.maintenanceRequest.create({
     data: { ...dto, reportedByUserId: userId },
+    include: {
+      dorm: { include: { block: true } },
+      reportedBy: { select: { email: true } },
+      assignedTo: { select: { email: true } },
+    },
   });
+
+  return attachCompatibilityRoomToMaintenanceRequest(request);
 }
 
 export async function listRequests(query: {
@@ -27,7 +35,7 @@ export async function listRequests(query: {
       skip,
       take,
       include: {
-        room: { include: { dorm: { select: { name: true } } } },
+        dorm: { include: { block: true } },
         reportedBy: { select: { email: true } },
         assignedTo: { select: { email: true } },
       },
@@ -36,7 +44,10 @@ export async function listRequests(query: {
     prisma.maintenanceRequest.count({ where }),
   ]);
 
-  return { requests, meta: buildMeta(total, page, limit) };
+  return {
+    requests: requests.map((request) => attachCompatibilityRoomToMaintenanceRequest(request)),
+    meta: buildMeta(total, page, limit),
+  };
 }
 
 export async function getMyRequests(userId: string, query: { page?: string; limit?: string }) {
@@ -47,29 +58,34 @@ export async function getMyRequests(userId: string, query: { page?: string; limi
       where: { reportedByUserId: userId },
       skip,
       take,
-      include: { room: { include: { dorm: { select: { name: true } } } } },
+      include: { dorm: { include: { block: true } } },
       orderBy: { createdAt: "desc" },
     }),
     prisma.maintenanceRequest.count({ where: { reportedByUserId: userId } }),
   ]);
 
-  return { requests, meta: buildMeta(total, page, limit) };
+  return {
+    requests: requests.map((request) => attachCompatibilityRoomToMaintenanceRequest(request)),
+    meta: buildMeta(total, page, limit),
+  };
 }
 
 export async function getRequestById(id: string) {
-  const req = await prisma.maintenanceRequest.findUnique({
+  const request = await prisma.maintenanceRequest.findUnique({
     where: { id },
     include: {
-      room: { include: { dorm: true } },
+      dorm: { include: { block: true } },
       reportedBy: { select: { email: true } },
       assignedTo: true,
     },
   });
-  if (!req) throw Object.assign(new Error("Maintenance request not found"), { statusCode: 404 });
-  return req;
+  if (!request) throw Object.assign(new Error("Maintenance request not found"), { statusCode: 404 });
+  return attachCompatibilityRoomToMaintenanceRequest(request);
 }
 
 export async function updateRequest(id: string, adminId: string, dto: UpdateMaintenanceDto) {
+  void adminId;
+
   const data: Record<string, unknown> = {};
 
   if (dto.status !== undefined) {
@@ -81,5 +97,15 @@ export async function updateRequest(id: string, adminId: string, dto: UpdateMain
     data.assignedToUserId = dto.assignedToUserId;
   }
 
-  return prisma.maintenanceRequest.update({ where: { id }, data });
+  const request = await prisma.maintenanceRequest.update({
+    where: { id },
+    data,
+    include: {
+      dorm: { include: { block: true } },
+      reportedBy: { select: { email: true } },
+      assignedTo: true,
+    },
+  });
+
+  return attachCompatibilityRoomToMaintenanceRequest(request);
 }

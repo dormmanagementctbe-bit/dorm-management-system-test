@@ -40,32 +40,22 @@ export const listUsersQuerySchema = z
 
 export const updateMeSchema = z
   .object({
-    firstName: z.string().min(1).optional(),
-    fatherName: z.string().optional(),
-    grandfatherName: z.string().min(1).optional(),
     phone: z.string().nullable().optional(),
     department: z.string().optional(),
-    currentPassword: z.string().min(8).optional(),
-    newPassword: z.string().min(8).optional(),
+    guardianName: z.string().optional(),
+    guardianPhone: z.string().optional(),
+    emergencyContactName: z.string().optional(),
+    emergencyContactPhone: z.string().optional(),
+    hasDisability: z.boolean().optional(),
+    disabilityNotes: z.string().optional(),
+    scholarshipNotes: z.string().optional(),
   })
-  .strict()
-  .refine(
-    (data) => {
-      if (data.newPassword && !data.currentPassword) {
-        return false;
-      }
-      return true;
-    },
-    {
-      message: "currentPassword is required when newPassword is provided",
-      path: ["currentPassword"],
-    }
-  );
+  .strict();
 
 export const createUserSchema = z
   .object({
     email: z.string().email(),
-    password: z.string().min(8),
+    password: z.string().min(8).optional(),
     roleCodes: z.array(roleCodeSchema).min(1),
     studentProfile: studentProfileSchema.optional(),
   })

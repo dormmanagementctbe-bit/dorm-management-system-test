@@ -35,6 +35,15 @@ const envSchema = z.object({
     .enum(["development", "production", "test"])
     .default("development"),
   BCRYPT_ROUNDS: z.coerce.number().default(12),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  SMTP_SECURE: z
+    .string()
+    .optional()
+    .transform((value) => value === "true"),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().email().default("no-reply@dorm.local"),
 });
 
 const parsed = envSchema.safeParse(process.env);
