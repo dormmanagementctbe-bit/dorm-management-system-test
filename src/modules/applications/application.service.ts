@@ -1,3 +1,4 @@
+import { Prisma } from "../../../generated/prisma/index";
 import { prisma } from "../../config/database";
 import { parsePagination, buildMeta } from "../../utils/helpers";
 import { attachCompatibilityRoomToAllocation } from "../../utils/dorm-compat";
@@ -9,6 +10,44 @@ import {
 } from "./application.dto";
 import { calculatePriorityScore } from "../../services/priority.service";
 import { notifyUser } from "../notifications/notification.service";
+
+const APPLICATION_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_REFERENCE_NUMBER_ATTEMPTS = 5;
+
+const applicationInclude = {
+  student: {
+    select: {
+      id: true,
+      userId: true,
+      studentNumber: true,
+      department: true,
+      guardianName: true,
+      guardianPhone: true,
+    },
+  },
+  academicYear: {
+    select: {
+      id: true,
+      label: true,
+      startDate: true,
+      endDate: true,
+      applicationOpenDate: true,
+      applicationCloseDate: true,
+      isActive: true,
+    },
+  },
+  documents: true,
+  allocation: {
+    include: {
+      bed: {
+        include: {
+          dorm: { include: { block: true } },
+        },
+      },
+      dorm: { include: { block: true } },
+    },
+  },
+} satisfies Prisma.DormApplicationInclude;
 
 function toHttpError(message: string, statusCode: number) {
   return Object.assign(new Error(message), { statusCode });
@@ -29,95 +68,144 @@ function isApplicationEditable(app: {
   return Boolean(app.canEditUntil && app.canEditUntil > now);
 }
 
-async function loadDormMap(dormIds: string[]) {
-  const uniqueDormIds = [...new Set(dormIds)];
-  if (uniqueDormIds.length === 0) {
-    return new Map<string, Awaited<ReturnType<typeof prisma.dorm.findMany>>[number]>();
+function isPrismaUniqueError(err: unknown): err is { code: string; meta?: { target?: string[] } } {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "P2002"
+  );
+}
+
+function isReferenceNumberConflict(err: unknown) {
+  if (!isPrismaUniqueError(err)) return false;
+
+  const targets = err.meta?.target ?? [];
+  return targets.some((target) => target === "reference_number" || target === "referenceNumber");
+}
+
+function buildSubmissionReceipt(application: {
+  studentFullName: string | null;
+  referenceNumber: string | null;
+  submittedAt: Date;
+}) {
+  return {
+    studentFullName: application.studentFullName,
+    referenceNumber: application.referenceNumber,
+    submittedAt: application.submittedAt,
+  };
+}
+
+function normalizeAcademicYearLabel(label: string) {
+  return label.trim().replace(/\s+/g, "");
+}
+
+function buildAcademicYearLabelCandidates(label: string) {
+  const normalized = normalizeAcademicYearLabel(label);
+  const candidates = new Set<string>([normalized, normalized.replace(/-/g, "/"), normalized.replace(/\//g, "-")]);
+
+  const slashMatch = normalized.match(/^(\d{4})\/(\d{2}|\d{4})$/);
+  if (slashMatch) {
+    const startYear = slashMatch[1];
+    const endYear = slashMatch[2].length === 2 ? `${startYear.slice(0, 2)}${slashMatch[2]}` : slashMatch[2];
+
+    candidates.add(`${startYear}/${slashMatch[2]}`);
+    candidates.add(`${startYear}-${slashMatch[2]}`);
+    candidates.add(`${startYear}/${endYear}`);
+    candidates.add(`${startYear}-${endYear}`);
   }
 
-  const dorms = await prisma.dorm.findMany({
-    where: { id: { in: uniqueDormIds } },
-    include: { block: true },
-  });
+  const dashMatch = normalized.match(/^(\d{4})-(\d{2}|\d{4})$/);
+  if (dashMatch) {
+    const startYear = dashMatch[1];
+    const endYear = dashMatch[2].length === 2 ? `${startYear.slice(0, 2)}${dashMatch[2]}` : dashMatch[2];
 
-  return new Map(dorms.map((dorm) => [dorm.id, dorm]));
-}
-
-async function ensurePreferredDormIdsValid(preferredDormIds?: string[]) {
-  const dormMap = await loadDormMap(preferredDormIds ?? []);
-  if ((preferredDormIds?.length ?? 0) !== dormMap.size) {
-    throw toHttpError("One or more preferred dorm IDs are invalid", 400);
+    candidates.add(`${startYear}/${dashMatch[2]}`);
+    candidates.add(`${startYear}-${dashMatch[2]}`);
+    candidates.add(`${startYear}/${endYear}`);
+    candidates.add(`${startYear}-${endYear}`);
   }
-  return dormMap;
+
+  return [...candidates].filter(Boolean);
 }
 
-function buildPreferenceViews(
-  preferredDormIds: string[],
-  dormMap: Map<string, Awaited<ReturnType<typeof prisma.dorm.findMany>>[number]>
-) {
-  return preferredDormIds
-    .map((dormId, index) => {
-      const dorm = dormMap.get(dormId);
-      if (!dorm) return null;
-
-      return {
-        dormId,
-        preferenceRank: index + 1,
-        dorm,
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => item !== null);
-}
-
-async function decorateApplications<T extends { preferredDormIds: string[]; allocation?: unknown | null }>(
-  applications: T[]
-) {
-  const dormMap = await loadDormMap(applications.flatMap((application) => application.preferredDormIds));
-
+async function decorateApplications<T extends { allocation?: unknown | null }>(applications: T[]) {
   return applications.map((application) => {
-    const next: T & {
-      preferences: ReturnType<typeof buildPreferenceViews>;
-      allocation?: unknown | null;
-    } = {
-      ...application,
-      preferences: buildPreferenceViews(application.preferredDormIds, dormMap),
-    };
-
-    if (application.allocation && typeof application.allocation === "object") {
-      const allocation = application.allocation as { bed?: { dorm?: unknown } };
-      if (allocation.bed?.dorm) {
-        next.allocation = attachCompatibilityRoomToAllocation(
-          application.allocation as { bed: { dorm: Parameters<typeof attachCompatibilityRoomToAllocation>[0]["bed"]["dorm"] } }
-        );
-      }
+    if (!application.allocation || typeof application.allocation !== "object") {
+      return application;
     }
 
-    return next;
+    const allocation = application.allocation as { bed?: { dorm?: unknown } };
+    if (!allocation.bed?.dorm) {
+      return application;
+    }
+
+    return {
+      ...application,
+      allocation: attachCompatibilityRoomToAllocation(
+        application.allocation as {
+          bed: { dorm: Parameters<typeof attachCompatibilityRoomToAllocation>[0]["bed"]["dorm"] };
+        }
+      ),
+    };
   });
 }
 
-// Student submits application
-export async function createApplication(userId: string, dto: CreateApplicationDto) {
-  const student = await prisma.student.findUnique({ where: { userId } });
-  if (!student) throw toHttpError("Student profile not found", 404);
+async function resolveAcademicYearByLabel(label: string) {
+  const candidates = buildAcademicYearLabelCandidates(label);
+  const normalized = normalizeAcademicYearLabel(label);
 
-  const academicYear = await prisma.academicYear.findFirst({ where: { isActive: true } });
-  if (!academicYear) throw toHttpError("No active academic year found", 400);
-
-  const semester = await prisma.semester.findFirst({
-    where: { id: dto.semesterId, academicYearId: academicYear.id, isActive: true },
+  const academicYear = await prisma.academicYear.findFirst({
+    where: {
+      OR: [
+        ...candidates.map((candidate) => ({ label: candidate })),
+        {
+          AND: [
+            { label: { contains: normalized.slice(0, 4) } },
+            { label: { contains: normalized.slice(-2) } },
+          ],
+        },
+      ],
+    },
   });
-  if (!semester) throw toHttpError("Invalid or inactive semester", 400);
 
-  const now = new Date();
-  if (now < academicYear.applicationOpenDate || now > academicYear.applicationCloseDate) {
-    throw toHttpError("Applications are not open at this time", 400);
+  if (!academicYear) {
+    const availableAcademicYears = await prisma.academicYear.findMany({
+      select: { label: true },
+      orderBy: { startDate: "asc" },
+      take: 10,
+    });
+
+    if (availableAcademicYears.length === 0) {
+      throw toHttpError(
+        `Academic year ${label} was not found because no academic years are configured yet. Create one in academic_years first.`,
+        400
+      );
+    }
+
+    const availableLabels = availableAcademicYears.map((item) => item.label).join(", ");
+    throw toHttpError(`Academic year ${label} was not found. Available academic years: ${availableLabels}`, 400);
   }
 
+  return academicYear;
+}
+
+function ensureAcademicYearAcceptingApplications(academicYear: {
+  applicationOpenDate: Date;
+  applicationCloseDate: Date;
+}) {
+  const now = new Date();
+  if (now < academicYear.applicationOpenDate || now > academicYear.applicationCloseDate) {
+    throw toHttpError("Applications are not open for the selected academic year", 400);
+  }
+}
+
+async function ensureNoDuplicateApplication(studentId: string, academicYearId: string, excludeId?: string) {
   const existingApplication = await prisma.dormApplication.findFirst({
     where: {
-      studentId: student.id,
-      academicYearId: academicYear.id,
+      studentId,
+      academicYearId,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
     },
     select: { id: true },
   });
@@ -125,59 +213,181 @@ export async function createApplication(userId: string, dto: CreateApplicationDt
   if (existingApplication) {
     throw toHttpError("Only one application is allowed per academic year", 409);
   }
+}
 
-  const preferredDormIds = dto.preferredDormIds ?? [];
-  const preferredDormMap = await ensurePreferredDormIdsValid(preferredDormIds);
-  const scores = calculatePriorityScore(student, { submittedAt: now }, academicYear);
+async function syncStudentProfileFromApplication(
+  tx: Prisma.TransactionClient,
+  studentId: string,
+  data: {
+    studentNumber?: string;
+    department?: string | null;
+    guardianName?: string | null;
+    guardianPhone?: string | null;
+  }
+) {
+  const studentUpdate: Prisma.StudentUpdateInput = {
+    ...(data.studentNumber !== undefined ? { studentNumber: data.studentNumber } : {}),
+    ...(data.department !== undefined ? { department: data.department } : {}),
+    ...(data.guardianName !== undefined ? { guardianName: data.guardianName } : {}),
+    ...(data.guardianPhone !== undefined ? { guardianPhone: data.guardianPhone } : {}),
+  };
 
-  const application = await prisma.dormApplication.create({
-    data: {
-      studentId: student.id,
-      academicYearId: academicYear.id,
-      semesterId: semester.id,
-      currentCity: dto.currentCity,
-      currentSubcity: dto.currentSubcity,
-      currentWoreda: dto.currentWoreda,
-      hasDisability: dto.hasDisability,
-      disabilityType: dto.disabilityType,
-      medicalConditions: dto.medicalConditions,
-      canEditUntil: new Date(now.getTime() + 24 * 60 * 60 * 1000),
-      reason: dto.reason,
-      basePriorityScore: scores.basePriorityScore,
-      disabilityBonusScore: scores.disabilityBonusScore,
-      finalPriorityScore: scores.finalPriorityScore,
-      preferredDormIds,
-      documents: {
-        create: dto.documents.map((document) => ({
-          type: document.type,
-          originalName: document.originalName,
-          storagePath: document.storagePath,
-          mimeType: document.mimeType,
-          sizeBytes: document.sizeBytes,
-          status: "UPLOADED",
-        })),
+  if (Object.keys(studentUpdate).length === 0) {
+    return;
+  }
+
+  await tx.student.update({
+    where: { id: studentId },
+    data: studentUpdate,
+  });
+}
+
+async function generateReferenceNumber(tx: Prisma.TransactionClient, submittedAt: Date) {
+  const year = submittedAt.getUTCFullYear();
+  const start = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(year + 1, 0, 1, 0, 0, 0, 0));
+
+  const totalSubmittedThisYear = await tx.dormApplication.count({
+    where: {
+      submittedAt: {
+        gte: start,
+        lt: end,
       },
     },
-    include: {
-      documents: true,
+  });
+
+  return `REQ-${year}-${String(totalSubmittedThisYear + 1).padStart(4, "0")}`;
+}
+
+async function findActiveSemesterForAcademicYear(academicYearId: string) {
+  const semester = await prisma.semester.findFirst({
+    where: {
+      academicYearId,
+      isActive: true,
+    },
+    orderBy: {
+      startDate: "asc",
     },
   });
 
-  await notifyUser(student.userId, {
-    title: "Application Submitted",
-    message: `Your dorm application for ${academicYear.label} has been submitted.`,
-    type: "APPLICATION",
-  });
+  if (!semester) {
+    throw toHttpError("No active semester is configured for the active academic year", 400);
+  }
 
-  return {
-    ...application,
-    preferences: buildPreferenceViews(preferredDormIds, preferredDormMap),
-  };
+  return semester;
+}
+
+function buildDocumentCreateManyInput(applicationId: string, documents: CreateApplicationDto["documents"]) {
+  return documents.map((document) => ({
+    applicationId,
+    type: document.type,
+    originalName: document.originalName,
+    storagePath: document.storagePath,
+    mimeType: document.mimeType,
+    sizeBytes: document.sizeBytes,
+    status: "UPLOADED" as const,
+  }));
+}
+
+// Student submits application
+export async function createApplication(userId: string, dto: CreateApplicationDto) {
+  const student = await prisma.student.findUnique({
+    where: { userId },
+    select: {
+      id: true,
+      userId: true,
+      studyYear: true,
+      hasDisability: true,
+    },
+  });
+  if (!student) throw toHttpError("Student profile not found", 404);
+
+  const academicYear = await resolveAcademicYearByLabel(dto.academicYear);
+  ensureAcademicYearAcceptingApplications(academicYear);
+  await ensureNoDuplicateApplication(student.id, academicYear.id);
+
+  const submittedAt = new Date();
+  const scores = calculatePriorityScore(student, { submittedAt }, academicYear);
+
+  for (let attempt = 0; attempt < MAX_REFERENCE_NUMBER_ATTEMPTS; attempt += 1) {
+    try {
+      const application = await prisma.$transaction(async (tx) => {
+        await syncStudentProfileFromApplication(tx, student.id, {
+          studentNumber: dto.studentNumber,
+          department: dto.department,
+          guardianName: dto.guardianName,
+          guardianPhone: dto.guardianPhone,
+        });
+
+        const referenceNumber = await generateReferenceNumber(tx, submittedAt);
+
+        return tx.dormApplication.create({
+          select: {
+            studentFullName: true,
+            referenceNumber: true,
+            submittedAt: true,
+          },
+          data: {
+            studentFullName: dto.studentFullName,
+            referenceNumber,
+            currentSubcity: dto.location.currentSubcity,
+            currentWoreda: dto.location.currentWoreda ?? null,
+            hasDisability: student.hasDisability,
+            medicalCondition: dto.medicalCondition ?? null,
+            canEditUntil: new Date(submittedAt.getTime() + APPLICATION_EDIT_WINDOW_MS),
+            submittedAt,
+            basePriorityScore: scores.basePriorityScore,
+            disabilityBonusScore: scores.disabilityBonusScore,
+            finalPriorityScore: scores.finalPriorityScore,
+            student: {
+              connect: { id: student.id },
+            },
+            academicYear: {
+              connect: { id: academicYear.id },
+            },
+            documents: {
+              create: dto.documents.map((document) => ({
+                type: document.type,
+                originalName: document.originalName,
+                storagePath: document.storagePath,
+                mimeType: document.mimeType,
+                sizeBytes: document.sizeBytes,
+                status: "UPLOADED",
+              })),
+            },
+          },
+        });
+      }) as {
+        studentFullName: string | null;
+        referenceNumber: string | null;
+        submittedAt: Date;
+      };
+
+      await notifyUser(student.userId, {
+        title: "Application Submitted",
+        message: `Your dorm application for ${academicYear.label} has been submitted.`,
+        type: "APPLICATION",
+      });
+
+      return buildSubmissionReceipt(application);
+    } catch (err) {
+      if (isReferenceNumberConflict(err) && attempt < MAX_REFERENCE_NUMBER_ATTEMPTS - 1) {
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw toHttpError("Unable to generate an application reference number", 500);
 }
 
 // Student updates own application inside edit window
 export async function updateMyApplication(userId: string, applicationId: string, dto: UpdateApplicationDto) {
-  const student = await prisma.student.findUnique({ where: { userId } });
+  const student = await prisma.student.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
   if (!student) throw toHttpError("Student profile not found", 404);
 
   const existing = await prisma.dormApplication.findFirst({
@@ -185,8 +395,12 @@ export async function updateMyApplication(userId: string, applicationId: string,
       id: applicationId,
       studentId: student.id,
     },
-    include: {
-      documents: true,
+    select: {
+      id: true,
+      status: true,
+      canEditUntil: true,
+      editOverrideUntil: true,
+      academicYearId: true,
     },
   });
 
@@ -198,8 +412,13 @@ export async function updateMyApplication(userId: string, applicationId: string,
     throw toHttpError("Application is no longer editable", 403);
   }
 
-  const nextPreferredDormIds = dto.preferredDormIds ?? existing.preferredDormIds;
-  const preferredDormMap = await ensurePreferredDormIdsValid(nextPreferredDormIds);
+  let nextAcademicYearId = existing.academicYearId;
+  if (dto.academicYear) {
+    const academicYear = await resolveAcademicYearByLabel(dto.academicYear);
+    ensureAcademicYearAcceptingApplications(academicYear);
+    await ensureNoDuplicateApplication(student.id, academicYear.id, applicationId);
+    nextAcademicYearId = academicYear.id;
+  }
 
   const updated = await prisma.$transaction(async (tx) => {
     if (dto.documents) {
@@ -210,39 +429,37 @@ export async function updateMyApplication(userId: string, applicationId: string,
       });
 
       await tx.applicationDocument.createMany({
-        data: dto.documents.map((document) => ({
-          applicationId,
-          type: document.type,
-          originalName: document.originalName,
-          storagePath: document.storagePath,
-          mimeType: document.mimeType,
-          sizeBytes: document.sizeBytes,
-          status: "UPLOADED",
-        })),
+        data: buildDocumentCreateManyInput(applicationId, dto.documents),
       });
     }
+
+    await syncStudentProfileFromApplication(tx, student.id, {
+      studentNumber: dto.studentNumber,
+      department: dto.department,
+      guardianName: dto.guardianName,
+      guardianPhone: dto.guardianPhone,
+    });
 
     return tx.dormApplication.update({
       where: { id: applicationId },
       data: {
-        currentSubcity: dto.currentSubcity,
-        currentWoreda: dto.currentWoreda,
-        hasDisability: dto.hasDisability,
-        disabilityType: dto.disabilityType === null ? null : dto.disabilityType,
-        medicalConditions: dto.medicalConditions,
-        preferredDormIds: dto.preferredDormIds,
-        reason: dto.reason,
+        ...(dto.academicYear !== undefined
+          ? {
+              academicYear: {
+                connect: { id: nextAcademicYearId },
+              },
+            }
+          : {}),
+        ...(dto.studentFullName !== undefined ? { studentFullName: dto.studentFullName } : {}),
+        ...(dto.location?.currentSubcity !== undefined ? { currentSubcity: dto.location.currentSubcity } : {}),
+        ...(dto.location?.currentWoreda !== undefined ? { currentWoreda: dto.location.currentWoreda } : {}),
+        ...(dto.medicalCondition !== undefined ? { medicalCondition: dto.medicalCondition } : {}),
       },
-      include: {
-        documents: true,
-      },
+      include: applicationInclude,
     });
   });
 
-  return {
-    ...updated,
-    preferences: buildPreferenceViews(nextPreferredDormIds, preferredDormMap),
-  };
+  return (await decorateApplications([updated]))[0];
 }
 
 // Admin lists all applications
@@ -262,11 +479,7 @@ export async function listApplications(query: {
       where,
       skip,
       take,
-      include: {
-        student: { select: { firstName: true, grandfatherName: true, studentNumber: true } },
-        academicYear: { select: { label: true } },
-        documents: true,
-      },
+      include: applicationInclude,
       orderBy: { finalPriorityScore: "desc" },
     }),
     prisma.dormApplication.count({ where }),
@@ -280,26 +493,15 @@ export async function listApplications(query: {
 
 // Student views own applications
 export async function getMyApplications(userId: string) {
-  const student = await prisma.student.findUnique({ where: { userId } });
+  const student = await prisma.student.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
   if (!student) throw toHttpError("Student profile not found", 404);
 
   const applications = await prisma.dormApplication.findMany({
     where: { studentId: student.id },
-    include: {
-      academicYear: true,
-      semester: true,
-      documents: true,
-      allocation: {
-        include: {
-          bed: {
-            include: {
-              dorm: { include: { block: true } },
-            },
-          },
-          dorm: { include: { block: true } },
-        },
-      },
-    },
+    include: applicationInclude,
     orderBy: { submittedAt: "desc" },
   });
 
@@ -310,22 +512,7 @@ export async function getMyApplications(userId: string) {
 export async function getApplicationById(id: string) {
   const application = await prisma.dormApplication.findUnique({
     where: { id },
-    include: {
-      student: true,
-      academicYear: true,
-      semester: true,
-      documents: true,
-      allocation: {
-        include: {
-          bed: {
-            include: {
-              dorm: { include: { block: true } },
-            },
-          },
-          dorm: { include: { block: true } },
-        },
-      },
-    },
+    include: applicationInclude,
   });
   if (!application) throw toHttpError("Application not found", 404);
 
@@ -407,6 +594,8 @@ export async function runAllocation(adminId: string) {
   const academicYear = await prisma.academicYear.findFirst({ where: { isActive: true } });
   if (!academicYear) throw toHttpError("No active academic year", 400);
 
+  const activeSemester = await findActiveSemesterForAcademicYear(academicYear.id);
+
   const applications = await prisma.dormApplication.findMany({
     where: { academicYearId: academicYear.id, status: "APPROVED" },
     include: { student: { select: { userId: true } } },
@@ -419,17 +608,14 @@ export async function runAllocation(adminId: string) {
       dorm: { include: { block: true } },
       allocations: { where: { status: { in: ["ACTIVE", "PENDING_CHECKIN"] } } },
     },
+    orderBy: { createdAt: "asc" },
   });
 
   let allocated = 0;
   let waitlisted = 0;
 
   for (const application of applications) {
-    const preferredDormIds = application.preferredDormIds;
-
-    const bed =
-      beds.find((candidate) => preferredDormIds.includes(candidate.dormId) && candidate.allocations.length === 0) ??
-      beds.find((candidate) => candidate.allocations.length === 0);
+    const bed = beds.find((candidate) => candidate.allocations.length === 0);
 
     if (!bed) {
       await prisma.dormApplication.update({
@@ -449,7 +635,7 @@ export async function runAllocation(adminId: string) {
           blockId: bed.dorm.blockId,
           applicationId: application.id,
           academicYearId: academicYear.id,
-          semesterId: application.semesterId,
+          semesterId: activeSemester.id,
           startDate: academicYear.startDate,
           endDate: academicYear.endDate,
           allocatedByUserId: adminId,

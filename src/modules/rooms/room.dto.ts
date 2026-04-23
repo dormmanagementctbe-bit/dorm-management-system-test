@@ -17,5 +17,17 @@ export const createRoomSchema = roomBaseSchema.refine((value) => Boolean(value.d
 
 export const updateRoomSchema = roomBaseSchema.partial().omit({ dormId: true, blockId: true });
 
+export const listRoomsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  dormId: z.string().uuid().optional(),
+  status: z.enum(["ACTIVE", "INACTIVE", "MAINTENANCE"]).optional(),
+  isActive: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === "true")),
+});
+
 export type CreateRoomDto = z.infer<typeof createRoomSchema>;
 export type UpdateRoomDto = z.infer<typeof updateRoomSchema>;
+export type ListRoomsQueryDto = z.infer<typeof listRoomsQuerySchema>;

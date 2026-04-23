@@ -1,7 +1,7 @@
 import { prisma } from "../../config/database";
 import { parsePagination, buildMeta } from "../../utils/helpers";
 import { buildCompatibilityRoom } from "../../utils/dorm-compat";
-import { CreateRoomDto, UpdateRoomDto } from "./room.dto";
+import { CreateRoomDto, ListRoomsQueryDto, UpdateRoomDto } from "./room.dto";
 
 function deriveRoomName(blockCode: string, roomNumber: string) {
   return `${blockCode}-${roomNumber}`;
@@ -44,16 +44,12 @@ async function resolveBlockContext(dto: CreateRoomDto) {
   };
 }
 
-export async function listRooms(query: {
-  page?: string;
-  limit?: string;
-  status?: string;
-  dormId?: string;
-}) {
+export async function listRooms(query: ListRoomsQueryDto) {
   const { skip, take, page, limit } = parsePagination(query);
   const where: Record<string, unknown> = {};
 
   if (query.status) where.status = query.status;
+  if (query.isActive !== undefined) where.isActive = query.isActive;
 
   if (query.dormId) {
     const sourceDorm = await prisma.dorm.findUnique({

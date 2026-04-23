@@ -196,7 +196,6 @@ model User {
   notifications                Notification[]
   reportedMaintenanceRequests  MaintenanceRequest[]      @relation("ReportedBy")
   assignedMaintenanceRequests  MaintenanceRequest[]      @relation("AssignedTo")
-  confirmedMaintenanceRequests MaintenanceRequest[]      @relation("ConfirmedBy")
   allocatedBy                  Allocation[]              @relation("AllocatedBy")
   reviewedApplications         DormApplication[]         @relation("ReviewedBy")
   reviewedApplicationDocuments ApplicationDocument[]     @relation("ApplicationDocumentReviewedBy")
@@ -321,7 +320,6 @@ model Semester {
   updatedAt              DateTime  @updatedAt @map("updated_at")
 
   academicYear           AcademicYear             @relation(fields: [academicYearId], references: [id])
-  applications           DormApplication[]
   allocations            Allocation[]
   cityPriorityRules      CityPriorityRule[]
   disabilityPriorityRules DisabilityPriorityRule[]
@@ -433,13 +431,13 @@ model DormApplication {
   id                     String            @id @default(uuid()) @db.Uuid
   studentId              String            @map("student_id") @db.Uuid
   academicYearId         String            @map("academic_year_id") @db.Uuid
-  semesterId             String            @map("semester_id") @db.Uuid
-  currentCity            String?           @map("current_city")
+  studentFullName        String?           @map("student_full_name")
+  referenceNumber        String?           @unique @map("reference_number")
   currentSubcity         String?           @map("current_subcity")
   currentWoreda          String?           @map("current_woreda")
   hasDisability          Boolean           @default(false) @map("has_disability")
   disabilityType         String?           @map("disability_type")
-  medicalConditions      String[]          @default([]) @map("medical_conditions")
+  medicalCondition       String?           @map("medical_condition")
   canEditUntil           DateTime?         @map("can_edit_until")
   editOverrideUntil      DateTime?         @map("edit_override_until")
   basePriorityScore      Int               @default(0) @map("base_priority_score")
@@ -447,7 +445,6 @@ model DormApplication {
   manualAdjustmentScore  Int               @default(0) @map("manual_adjustment_score")
   finalPriorityScore     Int               @default(0) @map("final_priority_score")
   status                 ApplicationStatus @default(PENDING)
-  preferredDormIds       String[]          @default([]) @map("preferred_dorm_ids")
   reason                 String?
   submittedAt            DateTime          @default(now()) @map("submitted_at")
   reviewedAt             DateTime?         @map("reviewed_at")
@@ -458,14 +455,12 @@ model DormApplication {
 
   student            Student                 @relation(fields: [studentId], references: [id])
   academicYear       AcademicYear            @relation(fields: [academicYearId], references: [id])
-  semester           Semester                @relation(fields: [semesterId], references: [id])
   reviewedBy         User?                   @relation("ReviewedBy", fields: [reviewedByUserId], references: [id])
   documents          ApplicationDocument[]
   allocation         Allocation?
 
   @@unique([studentId, academicYearId])
-  @@index([academicYearId, semesterId, status])
-  @@index([semesterId, status])
+  @@index([academicYearId, status])
   @@index([finalPriorityScore])
   @@map("dorm_applications")
 }
@@ -530,30 +525,26 @@ model Allocation {
 
 model MaintenanceRequest {
   id               String              @id @default(uuid()) @db.Uuid
-  roomId           String              @map("room_id") @db.Uuid
+  dormId           String              @map("room_id") @db.Uuid
   reportedByUserId String              @map("reported_by_user_id") @db.Uuid
   assignedToUserId String?             @map("assigned_to_user_id") @db.Uuid
-  confirmedByUserId String?            @map("confirmed_by_user_id") @db.Uuid
   category         MaintenanceCategory
   priority         MaintenancePriority @default(MEDIUM)
   status           MaintenanceStatus   @default(OPEN)
   title            String
   description      String
   resolvedAt       DateTime?           @map("resolved_at")
-  confirmedAt      DateTime?           @map("confirmed_at")
   createdAt        DateTime            @default(now()) @map("created_at")
   updatedAt        DateTime            @updatedAt @map("updated_at")
 
-  room        Room  @relation(fields: [roomId], references: [id])
+  dorm        Dorm  @relation(fields: [dormId], references: [id])
   reportedBy  User  @relation("ReportedBy", fields: [reportedByUserId], references: [id])
   assignedTo  User? @relation("AssignedTo", fields: [assignedToUserId], references: [id])
-  confirmedBy User? @relation("ConfirmedBy", fields: [confirmedByUserId], references: [id])
 
   @@index([status, priority])
-  @@index([roomId])
+  @@index([dormId])
   @@index([reportedByUserId])
   @@index([assignedToUserId])
-  @@index([confirmedByUserId])
   @@map("maintenance_requests")
 }
 

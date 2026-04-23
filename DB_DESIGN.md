@@ -252,10 +252,18 @@ Student applications for dorm accommodation in a given academic year.
 | `id` | UUID PK | |
 | `student_id` | UUID FK → students | |
 | `academic_year_id` | UUID FK → academic_years | |
-| `preferred_dorm_id` | UUID FK → dorms | Nullable |
+| `reference_number` | TEXT | Unique, e.g. `REQ-2026-0842` |
+| `current_subcity` | TEXT | Nullable |
+| `current_woreda` | TEXT | Nullable |
+| `has_disability` | BOOLEAN | Snapshot from student profile |
+| `medical_condition` | TEXT | Nullable |
+| `can_edit_until` | TIMESTAMPTZ | Nullable |
+| `edit_override_until` | TIMESTAMPTZ | Nullable |
+| `base_priority_score` | INT | Computed at submission time |
+| `disability_bonus_score` | INT | Computed at submission time |
+| `manual_adjustment_score` | INT | Default `0` |
+| `final_priority_score` | INT | Computed at submission time |
 | `status` | ENUM | `PENDING`, `APPROVED`, `REJECTED`, `WAITLISTED`, `ALLOCATED` |
-| `priority_score` | FLOAT | Computed at submission time |
-| `reason` | TEXT | Nullable — student's stated reason |
 | `submitted_at` | TIMESTAMPTZ | |
 | `reviewed_at` | TIMESTAMPTZ | Nullable |
 | `reviewed_by_id` | UUID FK → admins | Nullable |
