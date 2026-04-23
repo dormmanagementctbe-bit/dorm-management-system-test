@@ -196,6 +196,7 @@ model User {
   notifications                Notification[]
   reportedMaintenanceRequests  MaintenanceRequest[]      @relation("ReportedBy")
   assignedMaintenanceRequests  MaintenanceRequest[]      @relation("AssignedTo")
+  confirmedMaintenanceRequests MaintenanceRequest[]      @relation("ConfirmedBy")
   allocatedBy                  Allocation[]              @relation("AllocatedBy")
   reviewedApplications         DormApplication[]         @relation("ReviewedBy")
   reviewedApplicationDocuments ApplicationDocument[]     @relation("ApplicationDocumentReviewedBy")
@@ -529,26 +530,30 @@ model Allocation {
 
 model MaintenanceRequest {
   id               String              @id @default(uuid()) @db.Uuid
-  dormId           String              @map("dorm_id") @db.Uuid
+  roomId           String              @map("room_id") @db.Uuid
   reportedByUserId String              @map("reported_by_user_id") @db.Uuid
   assignedToUserId String?             @map("assigned_to_user_id") @db.Uuid
+  confirmedByUserId String?            @map("confirmed_by_user_id") @db.Uuid
   category         MaintenanceCategory
   priority         MaintenancePriority @default(MEDIUM)
   status           MaintenanceStatus   @default(OPEN)
   title            String
   description      String
   resolvedAt       DateTime?           @map("resolved_at")
+  confirmedAt      DateTime?           @map("confirmed_at")
   createdAt        DateTime            @default(now()) @map("created_at")
   updatedAt        DateTime            @updatedAt @map("updated_at")
 
-  dorm       Dorm  @relation(fields: [dormId], references: [id])
-  reportedBy User  @relation("ReportedBy", fields: [reportedByUserId], references: [id])
-  assignedTo User? @relation("AssignedTo", fields: [assignedToUserId], references: [id])
+  room        Room  @relation(fields: [roomId], references: [id])
+  reportedBy  User  @relation("ReportedBy", fields: [reportedByUserId], references: [id])
+  assignedTo  User? @relation("AssignedTo", fields: [assignedToUserId], references: [id])
+  confirmedBy User? @relation("ConfirmedBy", fields: [confirmedByUserId], references: [id])
 
   @@index([status, priority])
-  @@index([dormId])
+  @@index([roomId])
   @@index([reportedByUserId])
   @@index([assignedToUserId])
+  @@index([confirmedByUserId])
   @@map("maintenance_requests")
 }
 

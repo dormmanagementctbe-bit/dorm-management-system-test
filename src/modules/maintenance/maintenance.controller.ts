@@ -1,7 +1,15 @@
 import { Request, Response, NextFunction } from "express";
-import { createMaintenanceSchema, updateMaintenanceSchema } from "./maintenance.dto";
+import {
+  confirmMaintenanceSchema,
+  createMaintenanceSchema,
+  updateMaintenanceSchema,
+} from "./maintenance.dto";
 import * as maintenanceService from "./maintenance.service";
 import { sendSuccess, sendPaginated } from "../../utils/helpers";
+
+function getRequestId(req: Request) {
+  return Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+}
 
 export async function create(req: Request, res: Response, next: NextFunction) {
   try {
@@ -36,8 +44,10 @@ export async function getMy(req: Request, res: Response, next: NextFunction) {
 
 export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
-    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const request = await maintenanceService.getRequestById(id);
+    const request = await maintenanceService.getRequestById(getRequestId(req), {
+      id: req.user!.id,
+      roles: req.user!.roles,
+    });
     sendSuccess(res, request);
   } catch (err) {
     next(err);
@@ -47,8 +57,24 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
 export async function update(req: Request, res: Response, next: NextFunction) {
   try {
     const dto = updateMaintenanceSchema.parse(req.body);
-    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-    const request = await maintenanceService.updateRequest(id, req.user!.id, dto);
+    const request = await maintenanceService.updateRequest(
+      getRequestId(req),
+      {
+        id: req.user!.id,
+        roles: req.user!.roles,
+      },
+      dto
+    );
+    sendSuccess(res, request);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function confirmFixed(req: Request, res: Response, next: NextFunction) {
+  try {
+    confirmMaintenanceSchema.parse(req.body ?? {});
+    const request = await maintenanceService.confirmRequestFixed(getRequestId(req), req.user!.id);
     sendSuccess(res, request);
   } catch (err) {
     next(err);

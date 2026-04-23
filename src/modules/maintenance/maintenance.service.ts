@@ -1,19 +1,83 @@
+import {
+  MaintenanceCategory,
+  MaintenancePriority,
+  MaintenanceStatus,
+  Prisma,
+  RoleCode,
+  UserStatus,
+} from "../../../generated/prisma/index";
 import { prisma } from "../../config/database";
-import { parsePagination, buildMeta } from "../../utils/helpers";
-import { attachCompatibilityRoomToMaintenanceRequest } from "../../utils/dorm-compat";
+import { buildMeta, parsePagination } from "../../utils/helpers";
 import { CreateMaintenanceDto, UpdateMaintenanceDto } from "./maintenance.dto";
 
-export async function createRequest(userId: string, dto: CreateMaintenanceDto) {
-  const request = await prisma.maintenanceRequest.create({
-    data: { ...dto, reportedByUserId: userId },
-    include: {
-      dorm: { include: { block: true } },
-      reportedBy: { select: { email: true } },
-      assignedTo: { select: { email: true } },
+type MaintenanceActor = {
+  id: string;
+  roles: RoleCode[];
+};
+
+const staffRoles: RoleCode[] = [RoleCode.MAINTENANCE, RoleCode.ADMIN, RoleCode.SUPER_ADMIN];
+const maintenanceStatuses = new Set(Object.values(MaintenanceStatus));
+const maintenancePriorities = new Set(Object.values(MaintenancePriority));
+const maintenanceCategories = new Set(Object.values(MaintenanceCategory));
+
+function toHttpError(message: string, statusCode: number) {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+function hasAnyRole(actorRoles: RoleCode[], roles: RoleCode[]) {
+  return roles.some((role) => actorRoles.includes(role));
+}
+
+function canManageMaintenance(actor: MaintenanceActor) {
+  return hasAnyRole(actor.roles, staffRoles);
+}
+
+async function ensureAssignableMaintenanceUser(userId: string) {
+  const user = await prisma.user.findFirst({
+    where: {
+      id: userId,
+      status: UserStatus.ACTIVE,
+      deletedAt: null,
+      userRoles: {
+        some: {
+          role: {
+            code: RoleCode.MAINTENANCE,
+          },
+        },
+      },
     },
+    select: { id: true },
   });
 
-  return attachCompatibilityRoomToMaintenanceRequest(request);
+  if (!user) {
+    throw toHttpError("Assigned user must be an active MAINTENANCE user", 400);
+  }
+}
+
+const maintenanceInclude = {
+  room: { include: { dorm: true } },
+  reportedBy: { select: { id: true, email: true } },
+  assignedTo: { select: { id: true, email: true } },
+  confirmedBy: { select: { id: true, email: true } },
+} satisfies Prisma.MaintenanceRequestInclude;
+
+async function getRequestOrThrow(id: string) {
+  const request = await prisma.maintenanceRequest.findUnique({
+    where: { id },
+    include: maintenanceInclude,
+  });
+
+  if (!request) {
+    throw toHttpError("Maintenance request not found", 404);
+  }
+
+  return request;
+}
+
+export async function createRequest(userId: string, dto: CreateMaintenanceDto) {
+  return prisma.maintenanceRequest.create({
+    data: { ...dto, reportedByUserId: userId },
+  });
 }
 
 export async function listRequests(query: {
@@ -22,12 +86,21 @@ export async function listRequests(query: {
   status?: string;
   priority?: string;
   category?: string;
+  assignedToUserId?: string;
 }) {
   const { skip, take, page, limit } = parsePagination(query);
-  const where: Record<string, unknown> = {};
-  if (query.status) where.status = query.status;
-  if (query.priority) where.priority = query.priority;
-  if (query.category) where.category = query.category;
+  const where: Prisma.MaintenanceRequestWhereInput = {};
+
+  if (query.status && maintenanceStatuses.has(query.status as MaintenanceStatus)) {
+    where.status = query.status as MaintenanceStatus;
+  }
+  if (query.priority && maintenancePriorities.has(query.priority as MaintenancePriority)) {
+    where.priority = query.priority as MaintenancePriority;
+  }
+  if (query.category && maintenanceCategories.has(query.category as MaintenanceCategory)) {
+    where.category = query.category as MaintenanceCategory;
+  }
+  if (query.assignedToUserId) where.assignedToUserId = query.assignedToUserId;
 
   const [requests, total] = await prisma.$transaction([
     prisma.maintenanceRequest.findMany({
@@ -35,19 +108,17 @@ export async function listRequests(query: {
       skip,
       take,
       include: {
-        dorm: { include: { block: true } },
-        reportedBy: { select: { email: true } },
-        assignedTo: { select: { email: true } },
+        room: { include: { dorm: { select: { id: true, name: true } } } },
+        reportedBy: { select: { id: true, email: true } },
+        assignedTo: { select: { id: true, email: true } },
+        confirmedBy: { select: { id: true, email: true } },
       },
       orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
     }),
     prisma.maintenanceRequest.count({ where }),
   ]);
 
-  return {
-    requests: requests.map((request) => attachCompatibilityRoomToMaintenanceRequest(request)),
-    meta: buildMeta(total, page, limit),
-  };
+  return { requests, meta: buildMeta(total, page, limit) };
 }
 
 export async function getMyRequests(userId: string, query: { page?: string; limit?: string }) {
@@ -58,54 +129,108 @@ export async function getMyRequests(userId: string, query: { page?: string; limi
       where: { reportedByUserId: userId },
       skip,
       take,
-      include: { dorm: { include: { block: true } } },
+      include: {
+        room: { include: { dorm: { select: { id: true, name: true } } } },
+        assignedTo: { select: { id: true, email: true } },
+        confirmedBy: { select: { id: true, email: true } },
+      },
       orderBy: { createdAt: "desc" },
     }),
     prisma.maintenanceRequest.count({ where: { reportedByUserId: userId } }),
   ]);
 
-  return {
-    requests: requests.map((request) => attachCompatibilityRoomToMaintenanceRequest(request)),
-    meta: buildMeta(total, page, limit),
-  };
+  return { requests, meta: buildMeta(total, page, limit) };
 }
 
-export async function getRequestById(id: string) {
-  const request = await prisma.maintenanceRequest.findUnique({
-    where: { id },
-    include: {
-      dorm: { include: { block: true } },
-      reportedBy: { select: { email: true } },
-      assignedTo: true,
-    },
-  });
-  if (!request) throw Object.assign(new Error("Maintenance request not found"), { statusCode: 404 });
-  return attachCompatibilityRoomToMaintenanceRequest(request);
+export async function getRequestById(id: string, actor: MaintenanceActor) {
+  const request = await getRequestOrThrow(id);
+
+  if (!canManageMaintenance(actor) && request.reportedByUserId !== actor.id) {
+    throw toHttpError("Insufficient permissions", 403);
+  }
+
+  return request;
 }
 
-export async function updateRequest(id: string, adminId: string, dto: UpdateMaintenanceDto) {
-  void adminId;
+export async function updateRequest(id: string, actor: MaintenanceActor, dto: UpdateMaintenanceDto) {
+  if (!canManageMaintenance(actor)) {
+    throw toHttpError("Insufficient permissions", 403);
+  }
 
-  const data: Record<string, unknown> = {};
+  if (
+    dto.status === undefined &&
+    dto.priority === undefined &&
+    dto.assignedToUserId === undefined
+  ) {
+    throw toHttpError("No maintenance fields provided to update", 400);
+  }
+
+  const existing = await getRequestOrThrow(id);
+  const data: Prisma.MaintenanceRequestUpdateInput = {};
+
+  if (dto.priority !== undefined) {
+    data.priority = dto.priority;
+  }
+
+  if (dto.assignedToUserId !== undefined) {
+    if (dto.assignedToUserId === null) {
+      data.assignedTo = { disconnect: true };
+    } else {
+      await ensureAssignableMaintenanceUser(dto.assignedToUserId);
+      data.assignedTo = { connect: { id: dto.assignedToUserId } };
+    }
+  }
+
+  if (
+    dto.assignedToUserId === undefined &&
+    existing.assignedToUserId === null &&
+    actor.roles.includes(RoleCode.MAINTENANCE) &&
+    (dto.status === "IN_PROGRESS" || dto.status === "RESOLVED")
+  ) {
+    data.assignedTo = { connect: { id: actor.id } };
+  }
 
   if (dto.status !== undefined) {
     data.status = dto.status;
-    if (dto.status === "RESOLVED") data.resolvedAt = new Date();
-  }
-  if (dto.priority !== undefined) data.priority = dto.priority;
-  if (dto.assignedToUserId !== undefined) {
-    data.assignedToUserId = dto.assignedToUserId;
+
+    if (dto.status === "RESOLVED") {
+      data.resolvedAt = new Date();
+    } else {
+      data.resolvedAt = null;
+      data.confirmedAt = null;
+      data.confirmedBy = { disconnect: true };
+    }
   }
 
-  const request = await prisma.maintenanceRequest.update({
+  return prisma.maintenanceRequest.update({
     where: { id },
     data,
-    include: {
-      dorm: { include: { block: true } },
-      reportedBy: { select: { email: true } },
-      assignedTo: true,
-    },
+    include: maintenanceInclude,
   });
+}
 
-  return attachCompatibilityRoomToMaintenanceRequest(request);
+export async function confirmRequestFixed(id: string, userId: string) {
+  const request = await getRequestOrThrow(id);
+
+  if (request.reportedByUserId !== userId) {
+    throw toHttpError("Only the reporting student can confirm this issue", 403);
+  }
+
+  if (request.status === "CLOSED") {
+    return request;
+  }
+
+  if (request.status !== "RESOLVED") {
+    throw toHttpError("Only resolved requests can be confirmed as fixed", 400);
+  }
+
+  return prisma.maintenanceRequest.update({
+    where: { id },
+    data: {
+      status: "CLOSED",
+      confirmedAt: new Date(),
+      confirmedBy: { connect: { id: userId } },
+    },
+    include: maintenanceInclude,
+  });
 }

@@ -18,7 +18,7 @@ erDiagram
         uuid id PK
         string email UK
         string password_hash
-        enum role "STUDENT | ADMIN | SUPER_ADMIN"
+        enum role "STUDENT | ADMIN | SUPER_ADMIN | MAINTENANCE"
         boolean is_active
         timestamp created_at
         timestamp updated_at
@@ -102,13 +102,15 @@ erDiagram
         uuid id PK
         uuid room_id FK
         uuid reported_by_id FK
+        uuid assigned_to_id FK
+        uuid confirmed_by_id FK
         enum category
         enum priority
         enum status
         string title
         text description
-        uuid assigned_to_id FK
         timestamp resolved_at
+        timestamp confirmed_at
         timestamp created_at
         timestamp updated_at
     }
@@ -136,7 +138,8 @@ erDiagram
     ALLOCATION }o--|| ACADEMIC_YEAR : "in"
     ALLOCATION }o--|| ADMIN : "allocated by"
     MAINTENANCE_REQUEST }|--|| USER : "reported by"
-    MAINTENANCE_REQUEST }o--o| ADMIN : "assigned to"
+    MAINTENANCE_REQUEST }o--o| USER : "assigned to maintenance staff"
+    MAINTENANCE_REQUEST }o--o| USER : "confirmed fixed by student"
     USER ||--o{ NOTIFICATION : "receives"
 ```
 
@@ -152,7 +155,7 @@ Central auth identity table. Every person in the system (student or admin) has a
 | `id` | UUID PK | `gen_random_uuid()` |
 | `email` | TEXT UNIQUE | Login identifier |
 | `password_hash` | TEXT | bcrypt-hashed |
-| `role` | ENUM | `STUDENT`, `ADMIN`, `SUPER_ADMIN` |
+| `role` | ENUM | `STUDENT`, `ADMIN`, `SUPER_ADMIN`, `MAINTENANCE` |
 | `is_active` | BOOLEAN | Soft-disable accounts |
 | `created_at` | TIMESTAMPTZ | Auto-set |
 | `updated_at` | TIMESTAMPTZ | Auto-updated |
@@ -287,16 +290,24 @@ Issue tracking for room/building problems.
 |--------|------|-------|
 | `id` | UUID PK | |
 | `room_id` | UUID FK → rooms | |
-| `reported_by_id` | UUID FK → users | Any authenticated user |
-| `category` | ENUM | `PLUMBING`, `ELECTRICAL`, `HVAC`, `FURNITURE`, `CLEANING`, `OTHER` |
+| `reported_by_id` | UUID FK → users | Student reporter |
+| `assigned_to_id` | UUID FK → users | Nullable; must be role `MAINTENANCE` |
+| `confirmed_by_id` | UUID FK → users | Nullable; reporting student who confirms fix |
+| `category` | ENUM | `PLUMBING`, `ELECTRICAL`, `FURNITURE`, `OTHER` |
 | `priority` | ENUM | `LOW`, `MEDIUM`, `HIGH`, `URGENT` |
 | `status` | ENUM | `OPEN`, `IN_PROGRESS`, `RESOLVED`, `CLOSED`, `REJECTED` |
 | `title` | TEXT | Short summary |
 | `description` | TEXT | Full description |
-| `assigned_to_id` | UUID FK → admins | Nullable |
 | `resolved_at` | TIMESTAMPTZ | Set when status → `RESOLVED` |
+| `confirmed_at` | TIMESTAMPTZ | Set when reporting student confirms fix (`CLOSED`) |
 | `created_at` | TIMESTAMPTZ | |
 | `updated_at` | TIMESTAMPTZ | Auto-updated |
+
+**Workflow**
+- Student logs in and submits a request (`OPEN`)
+- Maintenance staff views queue, self-assigns or assigns another maintenance user
+- Maintenance staff updates progress (`IN_PROGRESS` / `RESOLVED`)
+- Reporting student tracks status and confirms fix (`CLOSED`)
 
 ---
 
@@ -333,7 +344,8 @@ In-app notification feed per user.
 | Allocation → Admin | `allocations.allocated_by_id` | `admins.id` | RESTRICT |
 | Maintenance → Room | `maintenance_requests.room_id` | `rooms.id` | RESTRICT |
 | Maintenance → User | `maintenance_requests.reported_by_id` | `users.id` | RESTRICT |
-| Maintenance → Admin | `maintenance_requests.assigned_to_id` | `admins.id` | SET NULL |
+| Maintenance → Assignee User | `maintenance_requests.assigned_to_id` | `users.id` | SET NULL |
+| Maintenance → Confirming User | `maintenance_requests.confirmed_by_id` | `users.id` | SET NULL |
 | Notification → User | `notifications.user_id` | `users.id` | CASCADE |
 
 ---
@@ -357,6 +369,8 @@ In-app notification feed per user.
 | `allocations` | INDEX | `academic_year_id` | Year-scoped queries |
 | `maintenance_requests` | INDEX | `(status, priority)` | Admin work queue ordering |
 | `maintenance_requests` | INDEX | `reported_by_id` | User's own requests |
+| `maintenance_requests` | INDEX | `assigned_to_id` | Maintenance staff queue |
+| `maintenance_requests` | INDEX | `confirmed_by_id` | Confirmation audit lookup |
 | `notifications` | INDEX | `(user_id, is_read)` | Unread count + inbox |
 | `notifications` | INDEX | `created_at DESC` | Chronological feed |
 
