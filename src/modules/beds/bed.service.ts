@@ -19,10 +19,6 @@ export async function listBeds(query: ListBedsQueryDto) {
     where.dormId = query.dormId;
   }
 
-  if (query.roomId) {
-    where.dormId = query.roomId;
-  }
-
   if (query.status === "INACTIVE") {
     where.isActive = false;
   } else if (query.status) {

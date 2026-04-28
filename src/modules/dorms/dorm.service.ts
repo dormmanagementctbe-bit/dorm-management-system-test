@@ -85,29 +85,19 @@ export async function getDormById(id: string) {
 export async function getDormDetails(id: string) {
   const dorm = await prisma.dorm.findUnique({
     where: { id },
+    include: {
+      beds: {
+        select: {
+          status: true,
+          isActive: true,
+        },
+      },
+    },
   });
   if (!dorm) throw notFound("Dorm not found");
 
-  // Synthesize bed summary from rooms and allocation counts
-  const rooms = await prisma.room.findMany({
-    where: { dormId: id },
-    select: {
-      id: true,
-      capacity: true,
-      status: true,
-      _count: { select: { allocations: true } },
-    },
-  });
-
-  const allocationsCount = await prisma.allocation.count({ where: { room: { dormId: id } } });
-  const maintenanceCount = await prisma.maintenanceRequest.count({ where: { room: { dormId: id } } });
-
-  const bedLike = rooms.map((r) => ({
-    capacity: r.capacity,
-    allocated: r._count?.allocations ?? 0,
-    isActive: true,
-    status: r.status as any,
-  }));
+  const allocationsCount = await prisma.allocation.count({ where: { dormId: id } });
+  const maintenanceCount = await prisma.maintenanceRequest.count({ where: { roomId: id } });
 
   return {
     ...dorm,
@@ -118,7 +108,7 @@ export async function getDormDetails(id: string) {
       capacity: (dorm as any).capacity || rooms.length,
       status: (dorm as any).status || "ACTIVE",
     }),
-    bedSummary: summarizeBeds(bedLike),
+    bedSummary: summarizeBeds(dorm.beds),
     counts: {
       allocations: allocationsCount,
       maintenanceRequests: maintenanceCount,
@@ -127,11 +117,9 @@ export async function getDormDetails(id: string) {
 }
 
 export async function createDorm(dto: CreateDormDto) {
-  // Ensure required fields for Dorm
   return prisma.dorm.create({
     data: {
       ...dto,
-      location: (dto as any).location || "", // fallback if not present
     },
   });
 }
@@ -142,82 +130,70 @@ export async function updateDorm(id: string, dto: UpdateDormDto) {
 
 export async function getDormRooms(dormId: string, query: DormRoomsQueryDto) {
   const { skip, take, page, limit } = parsePagination(query);
+  const dorm = await prisma.dorm.findUnique({
+    where: { id: dormId },
+    include: {
+      block: true,
+      beds: { select: { status: true, isActive: true } },
+    },
+  });
 
-  const where: any = {
-    dormId,
-    ...(query.status ? { status: query.status } : {}),
-    ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
-  };
+  if (!dorm) {
+    return { rooms: [], meta: buildMeta(0, page, limit) };
+  }
 
-  const [rooms, total] = await prisma.$transaction([
-    prisma.room.findMany({
-      where,
-      skip,
-      take,
-      orderBy: { roomNumber: "asc" },
-    }),
-    prisma.room.count({ where }),
-  ]);
+  const matchesStatus = query.status ? dorm.status === query.status : true;
+  const matchesActive = query.isActive !== undefined ? dorm.isActive === query.isActive : true;
+  const matchesFloor = query.floorNumber !== undefined ? dorm.floorNumber === query.floorNumber : true;
+  const matchesOccupancy = matchesOccupancyFilter(dorm.beds, query.occupancy);
+
+  const roomList = matchesStatus && matchesActive && matchesFloor && matchesOccupancy
+    ? [buildCompatibilityRoom(dorm)]
+    : [];
+
+  const paged = roomList.slice(skip, skip + take);
 
   return {
-    rooms,
-    meta: buildMeta(total, page, limit),
+    rooms: paged,
+    meta: buildMeta(roomList.length, page, limit),
   };
 }
 
 export async function getDormBeds(dormId: string, query: DormBedsQueryDto) {
   const { skip, take, page, limit } = parsePagination(query);
-  // Synthesize bed rows from rooms (capacity + allocations)
-  const roomWhere: any = {
+  const where: {
+    dormId: string;
+    status?: "AVAILABLE" | "OCCUPIED" | "RESERVED" | "MAINTENANCE";
+    isActive?: boolean;
+  } = {
     dormId,
-    ...(query.status ? { status: query.status } : {}),
   };
 
-  if (query.roomId) {
-    roomWhere.id = query.roomId;
+  if (query.status === "INACTIVE") {
+    where.isActive = false;
+  } else if (query.status) {
+    where.status = query.status;
   }
 
-  const rooms = await prisma.room.findMany({
-    where: roomWhere,
-    select: {
-      id: true,
-      roomNumber: true,
-      capacity: true,
-      status: true,
-      _count: { select: { allocations: true } },
-    },
-    orderBy: { roomNumber: "asc" },
-  });
-
-  // Build bed-like list in memory and paginate
-  const allBeds: any[] = [];
-  for (const r of rooms) {
-    const allocated = r._count?.allocations ?? 0;
-    for (let i = 1; i <= (r.capacity ?? 0); i++) {
-      allBeds.push({
-        id: `${r.id}-${i}`,
-        roomId: r.id,
-        bedNumber: String(i),
-        status: i <= allocated ? "OCCUPIED" : "AVAILABLE",
-        isActive: true,
-        dorm: {
-          id: dormId,
-          code: (r as any).roomNumber || "",
-          name: (r as any).roomNumber || "",
-          floorNumber: 0,
-          capacity: r.capacity ?? 0,
-          status: (r as any).status ?? "ACTIVE",
-          isActive: true,
-        },
-      });
-    }
+  if (query.isActive !== undefined) {
+    where.isActive = query.isActive;
   }
 
-  const total = allBeds.length;
-  const paged = allBeds.slice(skip, skip + take);
+  const [beds, total] = await prisma.$transaction([
+    prisma.bed.findMany({
+      where,
+      skip,
+      take,
+      include: {
+        dorm: { include: { block: true } },
+      },
+      orderBy: [{ bedNumber: "asc" }],
+    }),
+    prisma.bed.count({ where }),
+  ]);
 
   return {
-    beds: paged,
+    beds: beds.map((bed) => attachCompatibilityRoomToBed(bed)),
     meta: buildMeta(total, page, limit),
   };
 }

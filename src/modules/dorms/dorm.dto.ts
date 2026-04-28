@@ -66,7 +66,6 @@ export const dormBedsQuerySchema = z.object({
   status: z
     .enum(["AVAILABLE", "OCCUPIED", "RESERVED", "MAINTENANCE", "INACTIVE"])
     .optional(),
-  roomId: z.string().uuid({ message: "Invalid room ID format" }).optional(),
   isActive: z
     .enum(["true", "false"])
     .optional()
