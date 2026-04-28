@@ -1,10 +1,12 @@
 import { z } from "zod";
 
+// ==================== Bed Query DTOs ====================
+
 export const listBedsQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional(),
-  dormId: z.string().uuid().optional(),
-  roomId: z.string().uuid().optional(),
+  page: z.coerce.number().int().min(1, "Page must be at least 1").optional(),
+  limit: z.coerce.number().int().min(1, "Limit must be at least 1").max(100, "Limit cannot exceed 100").optional(),
+  dormId: z.string().uuid({ message: "Invalid dorm ID format" }).optional(),
+  roomId: z.string().uuid({ message: "Invalid room ID format" }).optional(),
   status: z
     .enum(["AVAILABLE", "OCCUPIED", "RESERVED", "MAINTENANCE", "INACTIVE"])
     .optional(),
