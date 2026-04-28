@@ -9,6 +9,7 @@ import { maintenanceRouter } from "../modules/maintenance/maintenance.routes";
 import { notificationRouter } from "../modules/notifications/notification.routes";
 import { usersRouter } from "../modules/users/users.routes";
 import { bedRouter } from "../modules/beds/bed.routes";
+import { uploadRouter } from "../modules/uploads/upload.routes";
 
 export const router = Router();
 
@@ -22,3 +23,4 @@ router.use("/maintenance", maintenanceRouter);
 router.use("/notifications", notificationRouter);
 router.use("/users", usersRouter);
 router.use("/beds", bedRouter);
+router.use("/uploads", uploadRouter);

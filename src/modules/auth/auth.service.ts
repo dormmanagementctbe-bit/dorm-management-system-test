@@ -116,11 +116,8 @@ export async function register(dto: RegisterDto) {
         phone: dto.phone,
         guardianName: dto.guardianName,
         guardianPhone: dto.guardianPhone,
-        emergencyContactName: dto.emergencyContactName,
-        emergencyContactPhone: dto.emergencyContactPhone,
         hasDisability: dto.hasDisability ?? false,
         disabilityNotes: dto.disabilityNotes,
-        scholarshipNotes: dto.scholarshipNotes,
       },
     });
 

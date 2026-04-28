@@ -76,6 +76,7 @@ const maintenanceInclude = {
   dorm: { include: { block: true } },
   reportedBy: { select: { id: true, email: true } },
   assignedTo: { select: { id: true, email: true } },
+  confirmedBy: { select: { id: true, email: true } },
 } satisfies Prisma.MaintenanceRequestInclude;
 
 async function getRequestOrThrow(id: string) {
@@ -96,7 +97,7 @@ export async function createRequest(userId: string, dto: CreateMaintenanceDto) {
 
   const request = await prisma.maintenanceRequest.create({
     data: {
-      dormId: dto.roomId,
+      roomId: dto.roomId,
       reportedByUserId: userId,
       category: dto.category,
       priority: dto.priority,
@@ -192,6 +193,10 @@ export async function updateRequest(id: string, actor: MaintenanceActor, dto: Up
   }
 
   const existing = await getRequestOrThrow(id);
+  if (existing.status === "CLOSED") {
+    throw toHttpError("Closed requests cannot be updated", 400);
+  }
+
   const data: Prisma.MaintenanceRequestUpdateInput = {};
 
   if (dto.priority !== undefined) {
@@ -218,7 +223,15 @@ export async function updateRequest(id: string, actor: MaintenanceActor, dto: Up
 
   if (dto.status !== undefined) {
     data.status = dto.status;
-    data.resolvedAt = dto.status === "RESOLVED" ? new Date() : null;
+    if (dto.status === "RESOLVED") {
+      data.resolvedAt = new Date();
+      data.confirmedAt = null;
+      data.confirmedBy = { disconnect: true };
+    } else if (existing.status === "RESOLVED") {
+      data.resolvedAt = null;
+      data.confirmedAt = null;
+      data.confirmedBy = { disconnect: true };
+    }
   }
 
   const updated = await prisma.maintenanceRequest.update({
@@ -249,6 +262,8 @@ export async function confirmRequestFixed(id: string, userId: string) {
     where: { id },
     data: {
       status: "CLOSED",
+      confirmedAt: new Date(),
+      confirmedBy: { connect: { id: userId } },
     },
     include: maintenanceInclude,
   });

@@ -146,11 +146,8 @@ export async function updateCurrentUser(userId: string, dto: UpdateMeDto) {
           department: dto.department,
           guardianName: dto.guardianName,
           guardianPhone: dto.guardianPhone,
-          emergencyContactName: dto.emergencyContactName,
-          emergencyContactPhone: dto.emergencyContactPhone,
           hasDisability: dto.hasDisability,
           disabilityNotes: dto.disabilityNotes,
-          scholarshipNotes: dto.scholarshipNotes,
         },
       });
     }
@@ -378,11 +375,8 @@ export async function createUser(
           phone: dto.studentProfile.phone,
           guardianName: dto.studentProfile.guardianName,
           guardianPhone: dto.studentProfile.guardianPhone,
-          emergencyContactName: dto.studentProfile.emergencyContactName,
-          emergencyContactPhone: dto.studentProfile.emergencyContactPhone,
           hasDisability: dto.studentProfile.hasDisability ?? false,
           disabilityNotes: dto.studentProfile.disabilityNotes,
-          scholarshipNotes: dto.studentProfile.scholarshipNotes,
         },
       });
     }
@@ -522,11 +516,8 @@ export async function updateUserById(
           phone: dto.studentProfile.phone,
           guardianName: dto.studentProfile.guardianName,
           guardianPhone: dto.studentProfile.guardianPhone,
-          emergencyContactName: dto.studentProfile.emergencyContactName,
-          emergencyContactPhone: dto.studentProfile.emergencyContactPhone,
           hasDisability: dto.studentProfile.hasDisability,
           disabilityNotes: dto.studentProfile.disabilityNotes,
-          scholarshipNotes: dto.studentProfile.scholarshipNotes,
         },
       });
     }

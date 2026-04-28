@@ -297,7 +297,6 @@ export async function createApplication(userId: string, dto: CreateApplicationDt
       id: true,
       userId: true,
       studyYear: true,
-      hasDisability: true,
     },
   });
   if (!student) throw toHttpError("Student profile not found", 404);
@@ -307,7 +306,16 @@ export async function createApplication(userId: string, dto: CreateApplicationDt
   await ensureNoDuplicateApplication(student.id, academicYear.id);
 
   const submittedAt = new Date();
-  const scores = calculatePriorityScore(student, { submittedAt }, academicYear);
+  const hasDisability = dto.disabilityTags?.length ? true : dto.hasDisability ?? false;
+  const hasMedicalCondition =
+    dto.medicalConditionTags?.length || dto.medicalCondition?.length
+      ? true
+      : dto.hasMedicalCondition ?? false;
+  const scores = calculatePriorityScore(
+    { studyYear: student.studyYear, hasDisability },
+    { submittedAt },
+    academicYear
+  );
 
   for (let attempt = 0; attempt < MAX_REFERENCE_NUMBER_ATTEMPTS; attempt += 1) {
     try {
@@ -332,7 +340,10 @@ export async function createApplication(userId: string, dto: CreateApplicationDt
             referenceNumber,
             currentSubcity: dto.location.currentSubcity,
             currentWoreda: dto.location.currentWoreda ?? null,
-            hasDisability: student.hasDisability,
+            hasDisability,
+            hasMedicalCondition,
+            disabilityTags: dto.disabilityTags ?? [],
+            medicalConditionTags: dto.medicalConditionTags ?? [],
             medicalCondition: dto.medicalCondition ?? null,
             canEditUntil: new Date(submittedAt.getTime() + APPLICATION_EDIT_WINDOW_MS),
             submittedAt,
@@ -440,6 +451,19 @@ export async function updateMyApplication(userId: string, applicationId: string,
       guardianPhone: dto.guardianPhone,
     });
 
+    const nextHasDisability =
+      dto.hasDisability !== undefined
+        ? dto.hasDisability
+        : dto.disabilityTags !== undefined
+          ? dto.disabilityTags.length > 0
+          : undefined;
+    const nextHasMedicalCondition =
+      dto.hasMedicalCondition !== undefined
+        ? dto.hasMedicalCondition
+        : dto.medicalConditionTags !== undefined || dto.medicalCondition !== undefined
+          ? Boolean(dto.medicalConditionTags?.length || dto.medicalCondition?.length)
+          : undefined;
+
     return tx.dormApplication.update({
       where: { id: applicationId },
       data: {
@@ -453,6 +477,14 @@ export async function updateMyApplication(userId: string, applicationId: string,
         ...(dto.studentFullName !== undefined ? { studentFullName: dto.studentFullName } : {}),
         ...(dto.location?.currentSubcity !== undefined ? { currentSubcity: dto.location.currentSubcity } : {}),
         ...(dto.location?.currentWoreda !== undefined ? { currentWoreda: dto.location.currentWoreda } : {}),
+        ...(nextHasDisability !== undefined ? { hasDisability: nextHasDisability } : {}),
+        ...(nextHasMedicalCondition !== undefined
+          ? { hasMedicalCondition: nextHasMedicalCondition }
+          : {}),
+        ...(dto.disabilityTags !== undefined ? { disabilityTags: dto.disabilityTags } : {}),
+        ...(dto.medicalConditionTags !== undefined
+          ? { medicalConditionTags: dto.medicalConditionTags }
+          : {}),
         ...(dto.medicalCondition !== undefined ? { medicalCondition: dto.medicalCondition } : {}),
       },
       include: applicationInclude,

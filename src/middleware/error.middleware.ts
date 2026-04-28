@@ -70,6 +70,11 @@ export function errorMiddleware(
     return;
   }
 
+  if (err instanceof Error && err.name === "MulterError") {
+    res.status(400).json({ success: false, error: err.message });
+    return;
+  }
+
   // Generic errors
   if (err instanceof Error) {
     const statusCode =

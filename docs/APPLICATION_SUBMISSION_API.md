@@ -26,6 +26,10 @@ Request:
     "currentSubcity": "BOLE",
     "currentWoreda": "08"
   },
+  "hasDisability": false,
+  "hasMedicalCondition": true,
+  "disabilityTags": ["VISION_IMPAIRMENT"],
+  "medicalConditionTags": ["ASTHMA"],
   "medicalCondition": "Asthma",
   "documents": [
     {
@@ -130,6 +134,10 @@ Allowed fields:
 - `guardianPhone`
 - `location.currentSubcity`
 - `location.currentWoreda`
+- `hasDisability`
+- `hasMedicalCondition`
+- `disabilityTags`
+- `medicalConditionTags`
 - `medicalCondition`
 - `documents`
 
@@ -148,6 +156,30 @@ Not editable here:
 - Role: `STUDENT`
 
 Returns own applications with `status`, academic year, submitted applicant snapshot, synced student profile fields, documents, and allocation.
+
+## Uploading Documents (Local Storage)
+
+The backend supports local uploads for application documents.
+
+### `POST /uploads`
+**Auth required**
+
+Send `multipart/form-data` with a single file field named `file`.
+
+#### Success Response
+```json
+{
+  "success": true,
+  "data": {
+    "originalName": "id.jpg",
+    "storagePath": "uploads/1714387200000-123456789.jpg",
+    "mimeType": "image/jpeg",
+    "sizeBytes": 120000
+  }
+}
+```
+
+Use the returned `storagePath` in the application `documents` payload.
 
 ## Admin/Dorm Head Related
 - `GET /applications` admin list

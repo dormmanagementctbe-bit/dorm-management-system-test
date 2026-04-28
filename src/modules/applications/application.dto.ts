@@ -78,6 +78,10 @@ export const createApplicationSchema = z.object({
   guardianName: nullableTrimmedString(120),
   guardianPhone: nullableTrimmedString(30),
   location: applicationLocationSchema,
+  hasDisability: z.boolean().optional().default(false),
+  hasMedicalCondition: z.boolean().optional().default(false),
+  disabilityTags: z.array(z.string().trim().min(1).max(120)).default([]),
+  medicalConditionTags: z.array(z.string().trim().min(1).max(120)).default([]),
   medicalCondition: nullableTrimmedString(500),
   documents: z.array(applicationDocumentSchema).min(4),
 }).superRefine((value, ctx) => {
@@ -96,6 +100,10 @@ export const updateApplicationSchema = z.object({
   guardianName: nullableTrimmedString(120),
   guardianPhone: nullableTrimmedString(30),
   location: applicationLocationSchema.partial().optional(),
+  hasDisability: z.boolean().optional(),
+  hasMedicalCondition: z.boolean().optional(),
+  disabilityTags: z.array(z.string().trim().min(1).max(120)).optional(),
+  medicalConditionTags: z.array(z.string().trim().min(1).max(120)).optional(),
   medicalCondition: nullableTrimmedString(500),
   documents: z.array(applicationDocumentSchema).min(4).optional(),
 }).superRefine((value, ctx) => {
