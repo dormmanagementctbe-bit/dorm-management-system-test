@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  findMissingRequiredApplicationDocumentTypes,
+  supportedApplicationDocumentTypes,
+} from "./application.rules";
 
 export const addisAbabaSubcities = [
   "ARADA",
@@ -14,14 +18,7 @@ export const addisAbabaSubcities = [
   "LEMI_KURA",
 ] as const;
 
-const applicationDocumentTypeSchema = z.enum([
-  "ID_IMAGE",
-  "HIGHSCHOOL_TRANSCRIPT",
-  "ENTRANCE_EXAM_RESULT",
-  "KEBELE_VERIFICATION",
-  "STAFF_RECOGNITION",
-  "MEDICAL_DOCUMENT",
-]);
+const applicationDocumentTypeSchema = z.enum(supportedApplicationDocumentTypes);
 
 const uploadMimeTypes = ["application/pdf", "image/jpeg", "image/png"] as const;
 const academicYearPattern = /^\d{4}\/\d{2}$/;
@@ -35,25 +32,22 @@ function nullableTrimmedString(max: number) {
 }
 
 function ensureRequiredDocumentTypes(
-  documents: Array<z.infer<typeof applicationDocumentSchema>>,
+  value: {
+    documents: Array<z.infer<typeof applicationDocumentSchema>>;
+    hasMedicalCondition?: boolean;
+    medicalConditionTags?: string[];
+    medicalCondition?: string | null;
+  },
   ctx: z.RefinementCtx
 ) {
-  const requiredDocumentTypes = [
-    "ID_IMAGE",
-    "HIGHSCHOOL_TRANSCRIPT",
-    "ENTRANCE_EXAM_RESULT",
-    "KEBELE_VERIFICATION",
-  ] as const;
+  const missingDocumentTypes = findMissingRequiredApplicationDocumentTypes(value.documents, value);
 
-  const providedTypes = new Set(documents.map((document) => document.type));
-  for (const type of requiredDocumentTypes) {
-    if (!providedTypes.has(type)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Missing required document type: ${type}`,
-        path: ["documents"],
-      });
-    }
+  for (const type of missingDocumentTypes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Missing required document type: ${type}`,
+      path: ["documents"],
+    });
   }
 }
 
@@ -85,7 +79,7 @@ export const createApplicationSchema = z.object({
   medicalCondition: nullableTrimmedString(500),
   documents: z.array(applicationDocumentSchema).min(4),
 }).superRefine((value, ctx) => {
-  ensureRequiredDocumentTypes(value.documents, ctx);
+  ensureRequiredDocumentTypes(value, ctx);
 });
 
 export const updateApplicationSchema = z.object({
@@ -108,7 +102,12 @@ export const updateApplicationSchema = z.object({
   documents: z.array(applicationDocumentSchema).min(4).optional(),
 }).superRefine((value, ctx) => {
   if (value.documents) {
-    ensureRequiredDocumentTypes(value.documents, ctx);
+    ensureRequiredDocumentTypes({
+      documents: value.documents,
+      hasMedicalCondition: value.hasMedicalCondition,
+      medicalConditionTags: value.medicalConditionTags,
+      medicalCondition: value.medicalCondition,
+    }, ctx);
   }
 });
 

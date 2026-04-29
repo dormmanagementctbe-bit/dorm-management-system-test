@@ -105,7 +105,7 @@ export async function getDormDetails(id: string) {
       ...dorm,
       code: (dorm as any).code || "",
       floorNumber: (dorm as any).floorNumber || 0,
-      capacity: (dorm as any).capacity || rooms.length,
+      capacity: (dorm as any).capacity || dorm.beds.length,
       status: (dorm as any).status || "ACTIVE",
     }),
     bedSummary: summarizeBeds(dorm.beds),

@@ -8,6 +8,10 @@ import {
   SetEditOverrideDto,
   UpdateApplicationDto,
 } from "./application.dto";
+import {
+  findMissingRequiredApplicationDocumentTypes,
+  hasMedicalSupportDisclosure,
+} from "./application.rules";
 import { calculatePriorityScore } from "../../services/priority.service";
 import { notifyUser } from "../notifications/notification.service";
 
@@ -289,6 +293,24 @@ function buildDocumentCreateManyInput(applicationId: string, documents: CreateAp
   }));
 }
 
+function assertRequiredDocumentsPresent(
+  documents: Array<{ type: CreateApplicationDto["documents"][number]["type"] }>,
+  details: {
+    hasMedicalCondition?: boolean;
+    medicalConditionTags?: string[];
+    medicalCondition?: string | null;
+  }
+) {
+  const missingDocumentTypes = findMissingRequiredApplicationDocumentTypes(documents, details);
+
+  if (missingDocumentTypes.length === 0) {
+    return;
+  }
+
+  const label = missingDocumentTypes.length === 1 ? "type" : "types";
+  throw toHttpError(`Missing required document ${label}: ${missingDocumentTypes.join(", ")}`, 400);
+}
+
 // Student submits application
 export async function createApplication(userId: string, dto: CreateApplicationDto) {
   const student = await prisma.student.findUnique({
@@ -307,10 +329,12 @@ export async function createApplication(userId: string, dto: CreateApplicationDt
 
   const submittedAt = new Date();
   const hasDisability = dto.disabilityTags?.length ? true : dto.hasDisability ?? false;
-  const hasMedicalCondition =
-    dto.medicalConditionTags?.length || dto.medicalCondition?.length
-      ? true
-      : dto.hasMedicalCondition ?? false;
+  const hasMedicalCondition = hasMedicalSupportDisclosure(dto);
+  assertRequiredDocumentsPresent(dto.documents, {
+    hasMedicalCondition,
+    medicalConditionTags: dto.medicalConditionTags,
+    medicalCondition: dto.medicalCondition,
+  });
   const scores = calculatePriorityScore(
     { studyYear: student.studyYear, hasDisability },
     { submittedAt },
@@ -412,6 +436,14 @@ export async function updateMyApplication(userId: string, applicationId: string,
       canEditUntil: true,
       editOverrideUntil: true,
       academicYearId: true,
+      hasMedicalCondition: true,
+      medicalConditionTags: true,
+      medicalCondition: true,
+      documents: {
+        select: {
+          type: true,
+        },
+      },
     },
   });
 
@@ -429,6 +461,32 @@ export async function updateMyApplication(userId: string, applicationId: string,
     ensureAcademicYearAcceptingApplications(academicYear);
     await ensureNoDuplicateApplication(student.id, academicYear.id, applicationId);
     nextAcademicYearId = academicYear.id;
+  }
+
+  const nextMedicalConditionTags = dto.medicalConditionTags ?? existing.medicalConditionTags;
+  const nextMedicalCondition =
+    dto.medicalCondition !== undefined ? dto.medicalCondition : existing.medicalCondition;
+  const nextHasMedicalCondition =
+    dto.hasMedicalCondition !== undefined
+      ? dto.hasMedicalCondition
+      : dto.medicalConditionTags !== undefined || dto.medicalCondition !== undefined
+        ? hasMedicalSupportDisclosure({
+            medicalConditionTags: nextMedicalConditionTags,
+            medicalCondition: nextMedicalCondition,
+          })
+        : existing.hasMedicalCondition;
+
+  if (
+    dto.documents !== undefined ||
+    dto.hasMedicalCondition !== undefined ||
+    dto.medicalConditionTags !== undefined ||
+    dto.medicalCondition !== undefined
+  ) {
+    assertRequiredDocumentsPresent(dto.documents ?? existing.documents, {
+      hasMedicalCondition: nextHasMedicalCondition,
+      medicalConditionTags: nextMedicalConditionTags,
+      medicalCondition: nextMedicalCondition,
+    });
   }
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -456,12 +514,6 @@ export async function updateMyApplication(userId: string, applicationId: string,
         ? dto.hasDisability
         : dto.disabilityTags !== undefined
           ? dto.disabilityTags.length > 0
-          : undefined;
-    const nextHasMedicalCondition =
-      dto.hasMedicalCondition !== undefined
-        ? dto.hasMedicalCondition
-        : dto.medicalConditionTags !== undefined || dto.medicalCondition !== undefined
-          ? Boolean(dto.medicalConditionTags?.length || dto.medicalCondition?.length)
           : undefined;
 
     return tx.dormApplication.update({
